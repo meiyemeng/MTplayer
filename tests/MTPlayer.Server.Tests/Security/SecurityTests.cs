@@ -4,6 +4,7 @@ using System.Text;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using MTPlayer.Server.Auth;
 using MTPlayer.Server.Security;
 using Xunit;
 
@@ -206,6 +207,35 @@ public sealed class SecurityTests
         Assert.True(factory.VerifyToken(first, hash));
         Assert.False(factory.VerifyToken(second, hash));
         Assert.False(factory.VerifyToken(first, "not-base64"));
+    }
+
+    [Fact]
+    public void Jwt_signing_key_is_stably_domain_separated_from_the_data_encryption_key()
+    {
+        var first = JwtOptions.DeriveSigningKey(TestDataEncryptionKey);
+        var second = JwtOptions.DeriveSigningKey(TestDataEncryptionKey);
+        var source = Convert.FromBase64String(TestDataEncryptionKey);
+        using var hmac = new HMACSHA256(source);
+        var expected = hmac.ComputeHash(Encoding.UTF8.GetBytes("mtplayer-jwt-signing-v1"));
+
+        Assert.Equal(expected, first);
+        Assert.Equal(first, second);
+        Assert.NotEqual(source, first);
+        Assert.NotEqual(SHA256.HashData(source), first);
+        Assert.Equal(32, first.Length);
+        CryptographicOperations.ZeroMemory(first);
+        CryptographicOperations.ZeroMemory(second);
+        CryptographicOperations.ZeroMemory(source);
+        CryptographicOperations.ZeroMemory(expected);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not-base64")]
+    [InlineData("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==")]
+    public void Jwt_key_derivation_rejects_invalid_data_encryption_keys(string encodedKey)
+    {
+        Assert.Throws<ArgumentException>(() => JwtOptions.FromDataEncryptionKey(encodedKey));
     }
 
     [Fact]

@@ -1,4 +1,10 @@
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using MTPlayer.Server.Auth;
 using MTPlayer.Server.Data;
 using MTPlayer.Server.Security;
 
@@ -30,11 +36,80 @@ builder.Services.AddSingleton<ISecretProtector>(
     _ => new AesGcmSecretProtector(dataEncryptionKey));
 builder.Services.AddSingleton<PasswordHasher>();
 builder.Services.AddSingleton<TokenFactory>();
+var jwtOptions = JwtOptions.FromDataEncryptionKey(dataEncryptionKey);
+builder.Services.AddSingleton(jwtOptions);
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.MapInboundClaims = false;
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = JwtOptions.Issuer,
+            ValidateAudience = true,
+            ValidAudience = JwtOptions.Audience,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = jwtOptions.ValidationKey,
+            RequireExpirationTime = true,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromSeconds(30),
+            NameClaimType = "sub",
+            RoleClaimType = "role",
+        };
+    });
+builder.Services.AddAuthorization(options =>
+    options.AddPolicy("sync-access", policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.AddRequirements(new SyncAccessRequirement());
+    }));
+builder.Services.AddScoped<IAuthorizationHandler, SyncAccessHandler>();
+builder.Services.AddScoped<CurrentUser>();
+builder.Services.AddScoped<AuthService>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddProblemDetails();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    AddFixedWindowPolicy(options, builder.Configuration, "registration", 5, TimeSpan.FromMinutes(10));
+    AddFixedWindowPolicy(options, builder.Configuration, "login", 10, TimeSpan.FromMinutes(1));
+    AddFixedWindowPolicy(options, builder.Configuration, "refresh", 30, TimeSpan.FromMinutes(1));
+    AddFixedWindowPolicy(options, builder.Configuration, "email-token", 5, TimeSpan.FromMinutes(10));
+});
 
 var app = builder.Build();
 _ = app.Services.GetRequiredService<ISecretProtector>();
 
+app.UseExceptionHandler();
+app.UseRateLimiter();
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapAuthEndpoints();
 app.Run();
+
+static void AddFixedWindowPolicy(
+    RateLimiterOptions options,
+    IConfiguration configuration,
+    string policyName,
+    int defaultPermitLimit,
+    TimeSpan window)
+{
+    var configuredLimit = configuration.GetValue<int?>(
+        $"RateLimiting:{policyName}:PermitLimit");
+    var permitLimit = Math.Clamp(configuredLimit ?? defaultPermitLimit, 1, 10_000);
+    options.AddPolicy(policyName, context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                AutoReplenishment = true,
+                PermitLimit = permitLimit,
+                QueueLimit = 0,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                Window = window,
+            }));
+}
 
 public partial class Program
 {

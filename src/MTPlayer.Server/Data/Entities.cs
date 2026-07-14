@@ -39,6 +39,8 @@ public sealed class DeviceSessionEntity
 
     public DateTimeOffset LastActivityAtUtc { get; set; }
 
+    public DateTimeOffset ExpiresAtUtc { get; set; }
+
     public DateTimeOffset? RevokedAtUtc { get; set; }
 
     public UserEntity? User { get; set; }

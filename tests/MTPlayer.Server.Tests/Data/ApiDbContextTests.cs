@@ -132,7 +132,9 @@ public sealed class ApiDbContextTests
     {
         using var db = TestDb.CreateContext();
         var migrations = db.GetService<IMigrationsAssembly>();
-        var migrationId = Assert.Single(migrations.Migrations.Keys);
+        var migrationId = Assert.Single(
+            migrations.Migrations.Keys,
+            id => id.EndsWith("_InitialServerSchema", StringComparison.Ordinal));
         var migration = migrations.CreateMigration(
             migrations.Migrations[migrationId],
             db.Database.ProviderName!);
@@ -183,6 +185,24 @@ public sealed class ApiDbContextTests
                 [nameof(MailOutboxEntity.Status), nameof(MailOutboxEntity.NextAttemptAtUtc)]));
         Assert.DoesNotContain(outboxIndexes, operation =>
             operation.Columns.SequenceEqual([nameof(MailOutboxEntity.Status)]));
+    }
+
+    [Fact]
+    public void Auth_session_migration_adds_refresh_expiry_column()
+    {
+        using var db = TestDb.CreateContext();
+        var migrations = db.GetService<IMigrationsAssembly>();
+        var migrationId = Assert.Single(
+            migrations.Migrations.Keys,
+            id => id.EndsWith("_AddDeviceSessionExpiry", StringComparison.Ordinal));
+        var migration = migrations.CreateMigration(
+            migrations.Migrations[migrationId],
+            db.Database.ProviderName!);
+
+        var operation = Assert.Single(migration.UpOperations.OfType<AddColumnOperation>());
+        Assert.Equal("device_sessions", operation.Table);
+        Assert.Equal(nameof(DeviceSessionEntity.ExpiresAtUtc), operation.Name);
+        Assert.False(operation.IsNullable);
     }
 
     private static void AssertIndex(ApiDbContext db, Type entityType, params string[] propertyNames)

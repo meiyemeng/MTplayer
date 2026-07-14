@@ -29,6 +29,7 @@ internal sealed class DeviceSessionEntityConfiguration : IEntityTypeConfiguratio
         builder.Property(session => session.RefreshTokenHash).HasMaxLength(64);
         builder.Property(session => session.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
         builder.Property(session => session.LastActivityAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
+        builder.Property(session => session.ExpiresAtUtc);
         builder.HasIndex(session => session.RefreshTokenHash).IsUnique();
         builder.HasIndex(session => new { session.UserId, session.RevokedAtUtc });
         builder.HasOne(session => session.User)
