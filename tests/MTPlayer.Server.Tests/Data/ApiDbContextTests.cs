@@ -37,6 +37,21 @@ public sealed class ApiDbContextTests
     }
 
     [Fact]
+    public void Design_time_factory_creates_npgsql_context_without_secrets_or_external_host()
+    {
+        var factory = new ApiDbContextFactory();
+        using var db = factory.CreateDbContext([]);
+
+        Assert.Equal("Npgsql.EntityFrameworkCore.PostgreSQL", db.Database.ProviderName);
+        var connectionString = db.Database.GetConnectionString();
+        Assert.NotNull(connectionString);
+        Assert.Contains("Host=127.0.0.1", connectionString, StringComparison.Ordinal);
+        Assert.Contains("Port=1", connectionString, StringComparison.Ordinal);
+        Assert.DoesNotContain("Password", connectionString, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(db.Model.FindEntityType(typeof(UserEntity)));
+    }
+
+    [Fact]
     public void Sync_record_uses_composite_key_and_jsonb_payload()
     {
         using var db = TestDb.CreateContext();
