@@ -40,7 +40,7 @@ public sealed class JwtOptions : IDisposable
         return new SymmetricSecurityKey(_signingKey);
     }
 
-    internal bool IsKeyMaterialCleared => _signingKey is null;
+    internal bool IsOwnedDerivedKeyArrayCleared => _signingKey is null;
 
     internal bool IsDisposed => _signingKey is null;
 

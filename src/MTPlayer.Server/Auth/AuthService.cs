@@ -141,50 +141,77 @@ public sealed class AuthService(
                 return new AuthResult(AuthStatus.InvalidInput);
             }
 
-            var user = await db.Users.SingleOrDefaultAsync(
-                value => value.NormalizedEmail == normalizedEmail,
-                cancellationToken);
+            var userSnapshot = await db.Users.AsNoTracking()
+                .Where(value => value.NormalizedEmail == normalizedEmail)
+                .Select(value => new { value.Id, value.PasswordHash })
+                .SingleOrDefaultAsync(cancellationToken);
             var passwordMatches = await passwords.VerifyOrDummyAsync(
-                user?.PasswordHash,
+                userSnapshot?.PasswordHash,
                 request.Password,
                 cancellationToken);
-            if (user is null || !passwordMatches)
+            if (userSnapshot is null || !passwordMatches)
             {
                 return new AuthResult(AuthStatus.InvalidCredentials);
             }
 
-            if (user.Disabled)
+            UserEntity? unverifiedUser = null;
+            await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
             {
-                return new AuthResult(AuthStatus.Disabled);
+                var user = await db.Users
+                    .FromSqlInterpolated($"SELECT * FROM users WHERE \"Id\" = {userSnapshot.Id} FOR UPDATE")
+                    .SingleOrDefaultAsync(cancellationToken);
+                if (user is null ||
+                    !string.Equals(user.PasswordHash, userSnapshot.PasswordHash, StringComparison.Ordinal))
+                {
+                    return new AuthResult(AuthStatus.InvalidCredentials);
+                }
+
+                if (user.Disabled)
+                {
+                    return new AuthResult(AuthStatus.Disabled);
+                }
+
+                if (!user.EmailVerified)
+                {
+                    unverifiedUser = user;
+                    await transaction.CommitAsync(cancellationToken);
+                }
+                else
+                {
+                    var now = timeProvider.GetUtcNow();
+                    var refreshToken = tokenFactory.CreateRefreshToken();
+                    db.DeviceSessions.Add(new DeviceSessionEntity
+                    {
+                        Id = Guid.NewGuid(),
+                        UserId = user.Id,
+                        DeviceName = deviceName,
+                        Platform = platform,
+                        RefreshTokenHash = tokenFactory.HashToken(refreshToken),
+                        CreatedAtUtc = now,
+                        LastActivityAtUtc = now,
+                        ExpiresAtUtc = now.Add(JwtOptions.RefreshTokenLifetime),
+                    });
+                    await db.SaveChangesAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                    return new AuthResult(AuthStatus.Success, CreateTokenResponse(user, refreshToken, now));
+                }
             }
 
-            var now = timeProvider.GetUtcNow();
-            if (!user.EmailVerified)
-            {
-                var prepared = await PrepareEmailTokenAsync(
-                    VerificationPurpose,
-                    VerificationExpirySetting,
-                    DefaultVerificationExpiryMinutes,
-                    now,
-                    cancellationToken);
-                await TryIssueEmailTokenAsync(user.Id, user.Email, VerificationPurpose, prepared, now, cancellationToken);
-                return new AuthResult(AuthStatus.VerificationRequired);
-            }
-
-            var refreshToken = tokenFactory.CreateRefreshToken();
-            db.DeviceSessions.Add(new DeviceSessionEntity
-            {
-                Id = Guid.NewGuid(),
-                UserId = user.Id,
-                DeviceName = deviceName,
-                Platform = platform,
-                RefreshTokenHash = tokenFactory.HashToken(refreshToken),
-                CreatedAtUtc = now,
-                LastActivityAtUtc = now,
-                ExpiresAtUtc = now.Add(JwtOptions.RefreshTokenLifetime),
-            });
-            await db.SaveChangesAsync(cancellationToken);
-            return new AuthResult(AuthStatus.Success, CreateTokenResponse(user, refreshToken, now));
+            var verificationNow = timeProvider.GetUtcNow();
+            var prepared = await PrepareEmailTokenAsync(
+                VerificationPurpose,
+                VerificationExpirySetting,
+                DefaultVerificationExpiryMinutes,
+                verificationNow,
+                cancellationToken);
+            await TryIssueEmailTokenAsync(
+                unverifiedUser!.Id,
+                unverifiedUser.Email,
+                VerificationPurpose,
+                prepared,
+                verificationNow,
+                cancellationToken);
+            return new AuthResult(AuthStatus.VerificationRequired);
         }
         finally
         {
@@ -199,19 +226,49 @@ public sealed class AuthService(
             return new AuthResult(AuthStatus.InvalidCredentials);
         }
 
-        var now = timeProvider.GetUtcNow();
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var consumed = await db.ConsumedRefreshTokens.AsNoTracking()
             .SingleOrDefaultAsync(token => token.TokenHash == oldHash, cancellationToken);
         if (consumed is not null)
         {
-            await RevokeSessionAsync(consumed.SessionId, now, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            await RevokeConsumedSessionAsync(consumed.SessionId, cancellationToken);
             return new AuthResult(AuthStatus.InvalidCredentials);
         }
 
+        var candidate = await db.DeviceSessions.AsNoTracking()
+            .Where(session => session.RefreshTokenHash == oldHash)
+            .Select(session => new { session.Id, session.UserId })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (candidate is null)
+        {
+            consumed = await db.ConsumedRefreshTokens.AsNoTracking()
+                .SingleOrDefaultAsync(token => token.TokenHash == oldHash, cancellationToken);
+            if (consumed is not null)
+            {
+                await RevokeConsumedSessionAsync(consumed.SessionId, cancellationToken);
+            }
+
+            return new AuthResult(AuthStatus.InvalidCredentials);
+        }
+
+        var now = timeProvider.GetUtcNow();
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var user = await db.Users
+            .FromSqlInterpolated($"SELECT * FROM users WHERE \"Id\" = {candidate.UserId} FOR UPDATE")
+            .SingleOrDefaultAsync(cancellationToken);
+        if (user is null)
+        {
+            return new AuthResult(AuthStatus.InvalidCredentials);
+        }
+
+        var accountFailure = user.Disabled
+            ? AuthStatus.Disabled
+            : !user.EmailVerified
+                ? AuthStatus.InvalidCredentials
+                : (AuthStatus?)null;
+
         var session = await db.DeviceSessions
-            .FromSqlInterpolated($"SELECT * FROM device_sessions WHERE \"RefreshTokenHash\" = {oldHash} FOR UPDATE")
+            .FromSqlInterpolated(
+                $"SELECT * FROM device_sessions WHERE \"Id\" = {candidate.Id} AND \"RefreshTokenHash\" = {oldHash} FOR UPDATE")
             .SingleOrDefaultAsync(cancellationToken);
         if (session is null)
         {
@@ -223,23 +280,20 @@ public sealed class AuthService(
                 await transaction.CommitAsync(cancellationToken);
             }
 
-            return new AuthResult(AuthStatus.InvalidCredentials);
+            return new AuthResult(accountFailure ?? AuthStatus.InvalidCredentials);
         }
 
-        var user = await db.Users
-            .FromSqlInterpolated($"SELECT * FROM users WHERE \"Id\" = {session.UserId} FOR UPDATE")
-            .SingleAsync(cancellationToken);
-        if (user.Disabled)
+        if (accountFailure is not null)
         {
-            session.RevokedAtUtc = now;
+            session.RevokedAtUtc ??= now;
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return new AuthResult(AuthStatus.Disabled);
+            return new AuthResult(accountFailure.Value);
         }
 
-        if (!user.EmailVerified || session.ExpiresAtUtc <= now || session.RevokedAtUtc is not null)
+        if (session.ExpiresAtUtc <= now || session.RevokedAtUtc is not null)
         {
-            session.RevokedAtUtc = now;
+            session.RevokedAtUtc ??= now;
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new AuthResult(AuthStatus.InvalidCredentials);
@@ -465,6 +519,14 @@ public sealed class AuthService(
         _ = await db.DeviceSessions
             .Where(session => session.Id == sessionId && session.RevokedAtUtc == null)
             .ExecuteUpdateAsync(update => update.SetProperty(session => session.RevokedAtUtc, now), cancellationToken);
+
+    private async Task RevokeConsumedSessionAsync(Guid sessionId, CancellationToken cancellationToken)
+    {
+        var now = timeProvider.GetUtcNow();
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await RevokeSessionAsync(sessionId, now, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
 
     private bool TryHashToken(string token, out string hash)
     {

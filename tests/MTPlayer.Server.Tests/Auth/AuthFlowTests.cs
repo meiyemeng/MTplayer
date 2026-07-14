@@ -306,6 +306,25 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
     }
 
     [DockerFact]
+    public async Task Login_rechecks_the_locked_user_after_password_verification()
+    {
+        var email = UniqueEmail();
+        await fixture.RegisterAndVerifyAsync(email);
+
+        var (response, reachedLockedRecheck) = await fixture.DisableWhileLoginWaitsAsync(email);
+
+        Assert.True(reachedLockedRecheck);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("accessToken", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("refreshToken", body, StringComparison.OrdinalIgnoreCase);
+        await using var db = fixture.CreateDbContext();
+        var normalizedEmail = PostgreSqlAuthFixture.NormalizeEmail(email);
+        Assert.False(await db.DeviceSessions.AnyAsync(
+            session => session.User!.NormalizedEmail == normalizedEmail));
+    }
+
+    [DockerFact]
     public async Task Forgot_password_invalid_missing_and_existing_inputs_share_response_and_coarse_timing()
     {
         var email = UniqueEmail();
@@ -498,6 +517,36 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
 
         var refresh = await fixture.DisableWhileRefreshWaitsAsync(email, pair.RefreshToken);
         Assert.Equal(HttpStatusCode.Forbidden, refresh.StatusCode);
+    }
+
+    [DockerFact]
+    public async Task Password_reset_and_refresh_do_not_deadlock()
+    {
+        for (var iteration = 0; iteration < 3; iteration++)
+        {
+            var email = UniqueEmail();
+            await fixture.RegisterAndVerifyAsync(email);
+            var login = await fixture.Client.PostAsJsonAsync(
+                "/api/v1/auth/login",
+                new LoginRequest(email, PostgreSqlAuthFixture.Password, $"锁序电脑-{iteration}", "windows"));
+            var pair = await ReadTokenPairAsync(login);
+            await fixture.Client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email });
+            var resetToken = await fixture.ReadLatestEmailTokenAsync(email, "reset");
+
+            var (reset, refresh) = await fixture.RaceResetAndRefreshAsync(
+                email,
+                resetToken,
+                pair.RefreshToken,
+                $"Deadlock-Free-Password-{iteration}-2026");
+
+            Assert.True(reset.IsSuccessStatusCode, $"Reset returned {(int)reset.StatusCode}.");
+            Assert.Contains(refresh.StatusCode, new[]
+            {
+                HttpStatusCode.OK,
+                HttpStatusCode.Unauthorized,
+                HttpStatusCode.Forbidden,
+            });
+        }
     }
 
     [DockerFact]
@@ -812,6 +861,66 @@ public sealed class PostgreSqlAuthFixture : IAsyncLifetime
         return await refreshTask;
     }
 
+    public async Task<(HttpResponseMessage Response, bool ReachedLockedRecheck)> DisableWhileLoginWaitsAsync(
+        string email)
+    {
+        await using var db = CreateDbContext();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var normalizedEmail = NormalizeEmail(email);
+        await db.Users
+            .Where(user => user.NormalizedEmail == normalizedEmail)
+            .ExecuteUpdateAsync(update => update.SetProperty(user => user.Disabled, true));
+        var loginTask = Client.PostAsJsonAsync(
+            "/api/v1/auth/login",
+            new LoginRequest(email, Password, "登录竞态电脑", "windows"));
+        var reachedLockedRecheck = await WaitForDatabaseLockOrCompletionAsync(
+            loginTask,
+            "%FROM users%",
+            "%FOR UPDATE%");
+        await transaction.CommitAsync();
+        var response = await loginTask.WaitAsync(TimeSpan.FromSeconds(10));
+        return (response, reachedLockedRecheck);
+    }
+
+    public async Task<(HttpResponseMessage Reset, HttpResponseMessage Refresh)> RaceResetAndRefreshAsync(
+        string email,
+        string resetToken,
+        string refreshToken,
+        string newPassword)
+    {
+        await using var blocker = CreateDbContext();
+        await using var blockerTransaction = await blocker.Database.BeginTransactionAsync();
+        var normalizedEmail = NormalizeEmail(email);
+        var userId = await blocker.Users
+            .Where(user => user.NormalizedEmail == normalizedEmail)
+            .Select(user => user.Id)
+            .SingleAsync();
+        await blocker.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM users WHERE \"Id\" = {userId} FOR UPDATE");
+
+        var resetTask = Client.PostAsJsonAsync(
+            "/api/v1/auth/reset-password",
+            new { token = resetToken, password = newPassword });
+        if (!await WaitForDatabaseLockOrCompletionAsync(resetTask, "%UPDATE users%"))
+        {
+            throw new InvalidOperationException("Reset completed before reaching the controlled user lock.");
+        }
+
+        var refreshTask = Client.PostAsJsonAsync(
+            "/api/v1/auth/refresh",
+            new RefreshRequest(refreshToken));
+        if (!await WaitForDatabaseLockOrCompletionAsync(refreshTask, "%FROM users%", "%FOR UPDATE%"))
+        {
+            throw new InvalidOperationException("Refresh completed before reaching the controlled user lock.");
+        }
+
+        await blockerTransaction.CommitAsync();
+        var responses = await Task.WhenAll(
+            resetTask.WaitAsync(TimeSpan.FromSeconds(10)),
+            refreshTask.WaitAsync(TimeSpan.FromSeconds(10)));
+        return (responses[0], responses[1]);
+    }
+
     public async Task SetSettingAsync(string key, string value)
     {
         await using var db = CreateDbContext();
@@ -917,6 +1026,48 @@ public sealed class PostgreSqlAuthFixture : IAsyncLifetime
         }
 
         throw new InvalidOperationException("PostgreSQL 16 test container did not become ready.", lastError);
+    }
+
+    private async Task<bool> WaitForDatabaseLockOrCompletionAsync(
+        Task requestTask,
+        string firstQueryPattern,
+        string secondQueryPattern = "%")
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND pid <> pg_backend_pid()
+                  AND wait_event_type = 'Lock'
+                  AND query ILIKE @first_pattern
+                  AND query ILIKE @second_pattern
+            );
+            """,
+            connection);
+        command.Parameters.AddWithValue("first_pattern", firstQueryPattern);
+        command.Parameters.AddWithValue("second_pattern", secondQueryPattern);
+
+        for (var attempt = 0; attempt < 500; attempt++)
+        {
+            if (requestTask.IsCompleted)
+            {
+                return false;
+            }
+
+            if (await command.ExecuteScalarAsync() is true)
+            {
+                return true;
+            }
+
+            await Task.Delay(20);
+        }
+
+        throw new TimeoutException(
+            $"Request did not reach the expected database lock for {firstQueryPattern} / {secondQueryPattern}.");
     }
 }
 

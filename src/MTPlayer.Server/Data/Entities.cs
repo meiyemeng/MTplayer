@@ -48,6 +48,7 @@ public sealed class DeviceSessionEntity
 
 public sealed class ConsumedRefreshTokenEntity
 {
+    // Expired replay history is intentionally retained here; Task 9 maintenance owns pruning it.
     public required string TokenHash { get; set; }
 
     public Guid SessionId { get; set; }
