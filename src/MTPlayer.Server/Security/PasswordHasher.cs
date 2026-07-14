@@ -11,12 +11,20 @@ public sealed class PasswordHasher
     private const int Parallelism = 2;
     private const int SaltSize = 16;
     private const int HashSize = 32;
+    private const int MinimumPasswordLength = 10;
+    private const int MaximumPasswordLength = 128;
     private const int MaximumEncodedLength = 256;
     private const string Prefix = "$argon2id$v=19$m=65536,t=3,p=2$";
 
     public string HashPassword(string password)
     {
         ArgumentNullException.ThrowIfNull(password);
+        if (!HasValidLength(password))
+        {
+            throw new ArgumentException(
+                "Password must be between 10 and 128 characters.",
+                nameof(password));
+        }
 
         var salt = RandomNumberGenerator.GetBytes(SaltSize);
         var hash = DeriveHash(password, salt);
@@ -34,23 +42,35 @@ public sealed class PasswordHasher
     public bool VerifyPassword(string encoded, string password)
     {
         ArgumentNullException.ThrowIfNull(password);
+        if (!HasValidLength(password))
+        {
+            return false;
+        }
 
         if (!TryParse(encoded, out var salt, out var expectedHash))
         {
             return false;
         }
 
-        var actualHash = DeriveHash(password, salt);
+        byte[]? actualHash = null;
         try
         {
+            actualHash = DeriveHash(password, salt);
             return CryptographicOperations.FixedTimeEquals(actualHash, expectedHash);
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(actualHash);
+            if (actualHash is not null)
+            {
+                CryptographicOperations.ZeroMemory(actualHash);
+            }
+
             CryptographicOperations.ZeroMemory(expectedHash);
         }
     }
+
+    private static bool HasValidLength(string password) =>
+        password.Length is >= MinimumPasswordLength and <= MaximumPasswordLength;
 
     private static byte[] DeriveHash(string password, byte[] salt)
     {
@@ -94,6 +114,8 @@ public sealed class PasswordHasher
             !TryDecodeCanonicalBase64(fields[4], SaltSize, out salt) ||
             !TryDecodeCanonicalBase64(fields[5], HashSize, out hash))
         {
+            CryptographicOperations.ZeroMemory(salt);
+            CryptographicOperations.ZeroMemory(hash);
             salt = [];
             hash = [];
             return false;
@@ -116,6 +138,7 @@ public sealed class PasswordHasher
             if (decoded.Length != expectedLength ||
                 !string.Equals(Convert.ToBase64String(decoded), encoded, StringComparison.Ordinal))
             {
+                CryptographicOperations.ZeroMemory(decoded);
                 decoded = [];
                 return false;
             }

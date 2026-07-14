@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 
 namespace MTPlayer.Server.Security;
 
@@ -8,51 +7,95 @@ public sealed class TokenFactory
     private const int TokenSize = 32;
     private const int HashSize = 32;
 
-    public string CreateRefreshToken() =>
-        Convert.ToBase64String(RandomNumberGenerator.GetBytes(TokenSize));
+    public string CreateRefreshToken()
+    {
+        var rawToken = RandomNumberGenerator.GetBytes(TokenSize);
+        try
+        {
+            return Convert.ToBase64String(rawToken);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(rawToken);
+        }
+    }
 
     public string HashToken(string token)
     {
         ArgumentNullException.ThrowIfNull(token);
-        return Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+        if (!TryDecodeCanonicalBase64(token, TokenSize, out var rawToken))
+        {
+            throw new ArgumentException(
+                "Token must be canonical Base64 encoding exactly 32 bytes.",
+                nameof(token));
+        }
+
+        byte[]? hash = null;
+        try
+        {
+            hash = SHA256.HashData(rawToken);
+            return Convert.ToBase64String(hash);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(rawToken);
+            if (hash is not null)
+            {
+                CryptographicOperations.ZeroMemory(hash);
+            }
+        }
     }
 
     public bool VerifyToken(string token, string encodedHash)
     {
-        ArgumentNullException.ThrowIfNull(token);
-
-        if (!TryDecodeHash(encodedHash, out var expectedHash))
+        if (!TryDecodeCanonicalBase64(token, TokenSize, out var rawToken))
         {
             return false;
         }
 
-        var actualHash = SHA256.HashData(Encoding.UTF8.GetBytes(token));
+        if (!TryDecodeCanonicalBase64(encodedHash, HashSize, out var expectedHash))
+        {
+            CryptographicOperations.ZeroMemory(rawToken);
+            return false;
+        }
+
+        byte[]? actualHash = null;
         try
         {
+            actualHash = SHA256.HashData(rawToken);
             return CryptographicOperations.FixedTimeEquals(actualHash, expectedHash);
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(actualHash);
+            CryptographicOperations.ZeroMemory(rawToken);
             CryptographicOperations.ZeroMemory(expectedHash);
+            if (actualHash is not null)
+            {
+                CryptographicOperations.ZeroMemory(actualHash);
+            }
         }
     }
 
-    private static bool TryDecodeHash(string? encodedHash, out byte[] hash)
+    private static bool TryDecodeCanonicalBase64(
+        string? encoded,
+        int expectedLength,
+        out byte[] decoded)
     {
-        hash = [];
-        if (string.IsNullOrEmpty(encodedHash) || encodedHash.Any(char.IsWhiteSpace))
+        decoded = [];
+        var expectedEncodedLength = ((expectedLength + 2) / 3) * 4;
+        if (encoded is null || encoded.Length != expectedEncodedLength)
         {
             return false;
         }
 
         try
         {
-            hash = Convert.FromBase64String(encodedHash);
-            if (hash.Length != HashSize ||
-                !string.Equals(Convert.ToBase64String(hash), encodedHash, StringComparison.Ordinal))
+            decoded = Convert.FromBase64String(encoded);
+            if (decoded.Length != expectedLength ||
+                !string.Equals(Convert.ToBase64String(decoded), encoded, StringComparison.Ordinal))
             {
-                hash = [];
+                CryptographicOperations.ZeroMemory(decoded);
+                decoded = [];
                 return false;
             }
 

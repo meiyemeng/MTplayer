@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Hosting;
@@ -77,6 +78,19 @@ public sealed class SecurityTests
     }
 
     [Fact]
+    public void Disposed_secret_protector_rejects_further_use()
+    {
+        var protector = new AesGcmSecretProtector(TestDataEncryptionKey);
+        var encoded = protector.Protect("secret");
+
+        protector.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => protector.Protect("secret"));
+        Assert.Throws<ObjectDisposedException>(() => protector.Unprotect(encoded));
+        protector.Dispose();
+    }
+
+    [Fact]
     public void Password_hash_uses_required_argon2id_parameters_and_random_salt()
     {
         var hasher = new PasswordHasher();
@@ -92,6 +106,62 @@ public sealed class SecurityTests
         var fields = first.Split('$');
         Assert.Equal(16, Convert.FromBase64String(fields[4]).Length);
         Assert.Equal(32, Convert.FromBase64String(fields[5]).Length);
+    }
+
+    [Fact]
+    public void Password_hash_accepts_10_and_128_character_boundaries()
+    {
+        var hasher = new PasswordHasher();
+        var minimum = new string('a', 10);
+        var maximum = new string('z', 128);
+
+        var minimumHash = hasher.HashPassword(minimum);
+        var maximumHash = hasher.HashPassword(maximum);
+
+        Assert.True(hasher.VerifyPassword(minimumHash, minimum));
+        Assert.True(hasher.VerifyPassword(maximumHash, maximum));
+    }
+
+    [Fact]
+    public void Password_hash_rejects_null_and_out_of_range_passwords()
+    {
+        var hasher = new PasswordHasher();
+
+        Assert.Throws<ArgumentNullException>(() => hasher.HashPassword(null!));
+        foreach (var invalid in new[]
+                 {
+                     string.Empty,
+                     new string('a', 9),
+                     new string('a', 129),
+                 })
+        {
+            var exception = Assert.Throws<ArgumentException>(() => hasher.HashPassword(invalid));
+            Assert.Contains("between 10 and 128 characters", exception.Message, StringComparison.Ordinal);
+        }
+
+        var oversized = new string('a', 1_000_000);
+        var stopwatch = Stopwatch.StartNew();
+        Assert.Throws<ArgumentException>(() => hasher.HashPassword(oversized));
+        stopwatch.Stop();
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(500));
+    }
+
+    [Fact]
+    public void Password_verify_rejects_out_of_range_passwords_without_derivation()
+    {
+        var hasher = new PasswordHasher();
+        var validHash = hasher.HashPassword("0123456789");
+
+        Assert.Throws<ArgumentNullException>(() => hasher.VerifyPassword(validHash, null!));
+        Assert.False(hasher.VerifyPassword(validHash, string.Empty));
+        Assert.False(hasher.VerifyPassword(validHash, new string('a', 9)));
+        Assert.False(hasher.VerifyPassword(validHash, new string('a', 129)));
+
+        var oversized = new string('a', 1_000_000);
+        var stopwatch = Stopwatch.StartNew();
+        Assert.False(hasher.VerifyPassword(validHash, oversized));
+        stopwatch.Stop();
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(500));
     }
 
     [Theory]
@@ -126,15 +196,76 @@ public sealed class SecurityTests
         var first = factory.CreateRefreshToken();
         var second = factory.CreateRefreshToken();
         var hash = factory.HashToken(first);
+        var firstBytes = Convert.FromBase64String(first);
 
         Assert.NotEqual(first, second);
-        Assert.Equal(32, Convert.FromBase64String(first).Length);
+        Assert.Equal(32, firstBytes.Length);
         Assert.Equal(
-            SHA256.HashData(Encoding.UTF8.GetBytes(first)),
+            SHA256.HashData(firstBytes),
             Convert.FromBase64String(hash));
         Assert.True(factory.VerifyToken(first, hash));
         Assert.False(factory.VerifyToken(second, hash));
         Assert.False(factory.VerifyToken(first, "not-base64"));
+    }
+
+    [Fact]
+    public void Token_hash_uses_decoded_32_byte_fixture()
+    {
+        var factory = new TokenFactory();
+        var rawToken = Enumerable.Range(0, 32).Select(index => (byte)index).ToArray();
+        var token = Convert.ToBase64String(rawToken);
+        var expectedHash = Convert.ToBase64String(SHA256.HashData(rawToken));
+
+        Assert.Equal(expectedHash, factory.HashToken(token));
+        Assert.True(factory.VerifyToken(token, expectedHash));
+    }
+
+    [Fact]
+    public void Token_hash_rejects_noncanonical_wrong_length_and_oversized_tokens()
+    {
+        var factory = new TokenFactory();
+        var canonical = Convert.ToBase64String(new byte[32]);
+
+        Assert.Throws<ArgumentNullException>(() => factory.HashToken(null!));
+        foreach (var invalid in new[]
+                 {
+                     string.Empty,
+                     "not-base64",
+                     canonical[..^1],
+                     $" {canonical}",
+                     Convert.ToBase64String(new byte[31]),
+                     Convert.ToBase64String(new byte[33]),
+                     new string('A', 10_000),
+                 })
+        {
+            Assert.Throws<ArgumentException>(() => factory.HashToken(invalid));
+        }
+    }
+
+    [Fact]
+    public void Token_verify_quickly_rejects_invalid_tokens_and_hashes()
+    {
+        var factory = new TokenFactory();
+        var token = factory.CreateRefreshToken();
+        var hash = factory.HashToken(token);
+        var invalidValues = new[]
+        {
+            string.Empty,
+            "not-base64",
+            token[..^1],
+            $"{token}\n",
+            Convert.ToBase64String(new byte[31]),
+            Convert.ToBase64String(new byte[33]),
+            new string('A', 10_000),
+        };
+
+        Assert.False(factory.VerifyToken(null!, hash));
+        Assert.False(factory.VerifyToken(token, null!));
+        foreach (var invalid in invalidValues)
+        {
+            Assert.False(factory.VerifyToken(invalid, hash));
+            Assert.False(factory.VerifyToken(token, invalid));
+        }
     }
 
     [Fact]
@@ -145,6 +276,17 @@ public sealed class SecurityTests
         Assert.IsType<AesGcmSecretProtector>(factory.Services.GetRequiredService<ISecretProtector>());
         Assert.IsType<PasswordHasher>(factory.Services.GetRequiredService<PasswordHasher>());
         Assert.IsType<TokenFactory>(factory.Services.GetRequiredService<TokenFactory>());
+    }
+
+    [Fact]
+    public void Dependency_injection_disposes_the_secret_protector_on_shutdown()
+    {
+        using var factory = CreateFactory(TestPostgreSqlConnectionString, TestDataEncryptionKey);
+        var protector = factory.Services.GetRequiredService<ISecretProtector>();
+
+        factory.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => protector.Protect("secret"));
     }
 
     [Theory]

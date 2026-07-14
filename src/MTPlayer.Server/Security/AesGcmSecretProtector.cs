@@ -3,7 +3,7 @@ using System.Text;
 
 namespace MTPlayer.Server.Security;
 
-public sealed class AesGcmSecretProtector : ISecretProtector
+public sealed class AesGcmSecretProtector : ISecretProtector, IDisposable
 {
     private const byte EnvelopeVersion = 1;
     private const int KeySize = 32;
@@ -15,19 +15,68 @@ public sealed class AesGcmSecretProtector : ISecretProtector
     private const string EnvelopeErrorMessage = "Encrypted value has an invalid AES-GCM envelope.";
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+    private readonly object _lifetimeLock = new();
     private readonly byte[] _key;
+    private bool _disposed;
 
     public AesGcmSecretProtector(string encodedKey)
     {
-        if (!TryDecodeCanonicalBase64(encodedKey, KeySize, out _key))
+        if (!TryDecodeCanonicalBase64(encodedKey, KeySize, out var key))
         {
             throw new ArgumentException(KeyErrorMessage, nameof(encodedKey));
         }
+
+        _key = key;
+    }
+
+    public static void ValidateKey(string encodedKey)
+    {
+        if (!TryDecodeCanonicalBase64(encodedKey, KeySize, out var key))
+        {
+            throw new ArgumentException(KeyErrorMessage, nameof(encodedKey));
+        }
+
+        CryptographicOperations.ZeroMemory(key);
     }
 
     public string Protect(string plaintext)
     {
         ArgumentNullException.ThrowIfNull(plaintext);
+
+        lock (_lifetimeLock)
+        {
+            ThrowIfDisposed();
+            return ProtectCore(plaintext);
+        }
+    }
+
+    public string Unprotect(string encoded)
+    {
+        lock (_lifetimeLock)
+        {
+            ThrowIfDisposed();
+            return UnprotectCore(encoded);
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_lifetimeLock)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            CryptographicOperations.ZeroMemory(_key);
+            _disposed = true;
+        }
+
+        GC.SuppressFinalize(this);
+    }
+
+    private string ProtectCore(string plaintext)
+    {
         if (plaintext.Length == 0)
         {
             throw new ArgumentException("Plaintext cannot be empty.", nameof(plaintext));
@@ -54,7 +103,7 @@ public sealed class AesGcmSecretProtector : ISecretProtector
         }
     }
 
-    public string Unprotect(string encoded)
+    private string UnprotectCore(string encoded)
     {
         if (!TryDecodeCanonicalBase64(encoded, out var envelope) ||
             envelope.Length < MinimumEnvelopeSize ||
@@ -88,13 +137,31 @@ public sealed class AesGcmSecretProtector : ISecretProtector
         }
     }
 
+    private void ThrowIfDisposed()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+    }
+
     private static bool TryDecodeCanonicalBase64(
         string? encoded,
         int expectedLength,
         out byte[] decoded)
     {
-        if (!TryDecodeCanonicalBase64(encoded, out decoded) || decoded.Length != expectedLength)
+        var expectedEncodedLength = ((expectedLength + 2) / 3) * 4;
+        if (encoded is null || encoded.Length != expectedEncodedLength)
         {
+            decoded = [];
+            return false;
+        }
+
+        if (!TryDecodeCanonicalBase64(encoded, out decoded))
+        {
+            return false;
+        }
+
+        if (decoded.Length != expectedLength)
+        {
+            CryptographicOperations.ZeroMemory(decoded);
             decoded = [];
             return false;
         }
@@ -115,6 +182,7 @@ public sealed class AesGcmSecretProtector : ISecretProtector
             decoded = Convert.FromBase64String(encoded);
             if (!string.Equals(Convert.ToBase64String(decoded), encoded, StringComparison.Ordinal))
             {
+                CryptographicOperations.ZeroMemory(decoded);
                 decoded = [];
                 return false;
             }

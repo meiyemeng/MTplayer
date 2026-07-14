@@ -5,11 +5,10 @@ using MTPlayer.Server.Security;
 var builder = WebApplication.CreateBuilder(args);
 const string postgreSqlConnectionStringKey = "ConnectionStrings:PostgreSQL";
 const string dataEncryptionKeyConfigurationKey = "DATA_ENCRYPTION_KEY";
-ISecretProtector secretProtector;
+var dataEncryptionKey = builder.Configuration[dataEncryptionKeyConfigurationKey] ?? string.Empty;
 try
 {
-    secretProtector = new AesGcmSecretProtector(
-        builder.Configuration[dataEncryptionKeyConfigurationKey] ?? string.Empty);
+    AesGcmSecretProtector.ValidateKey(dataEncryptionKey);
 }
 catch (ArgumentException exception)
 {
@@ -27,11 +26,13 @@ if (string.IsNullOrWhiteSpace(postgreSqlConnectionString))
 
 builder.Services.AddDbContext<ApiDbContext>(options =>
     options.UseNpgsql(postgreSqlConnectionString));
-builder.Services.AddSingleton(secretProtector);
+builder.Services.AddSingleton<ISecretProtector>(
+    _ => new AesGcmSecretProtector(dataEncryptionKey));
 builder.Services.AddSingleton<PasswordHasher>();
 builder.Services.AddSingleton<TokenFactory>();
 
 var app = builder.Build();
+_ = app.Services.GetRequiredService<ISecretProtector>();
 
 app.Run();
 
