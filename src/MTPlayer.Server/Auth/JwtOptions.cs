@@ -1,7 +1,11 @@
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using MTPlayer.Server.Data;
 using MTPlayer.Server.Security;
 
 [assembly: InternalsVisibleTo("MTPlayer.Server.Tests")]
@@ -17,18 +21,28 @@ public sealed class JwtOptions : IDisposable
     private const string SigningContext = "mtplayer-jwt-signing-v1";
     private byte[]? _signingKey;
 
-    private JwtOptions(byte[] signingKey)
+    private JwtOptions(byte[] signingKey) => _signingKey = signingKey;
+
+    internal SigningCredentials SigningCredentials
     {
-        _signingKey = signingKey;
-        SigningCredentials = new SigningCredentials(
-            new SymmetricSecurityKey(signingKey),
-            SecurityAlgorithms.HmacSha256);
-        ValidationKey = new SymmetricSecurityKey(signingKey.ToArray());
+        get
+        {
+            ObjectDisposedException.ThrowIf(_signingKey is null, this);
+            return new SigningCredentials(
+                new SymmetricSecurityKey(_signingKey),
+                SecurityAlgorithms.HmacSha256);
+        }
     }
 
-    internal SigningCredentials SigningCredentials { get; }
+    internal SecurityKey CreateValidationKey()
+    {
+        ObjectDisposedException.ThrowIf(_signingKey is null, this);
+        return new SymmetricSecurityKey(_signingKey);
+    }
 
-    internal SecurityKey ValidationKey { get; }
+    internal bool IsKeyMaterialCleared => _signingKey is null;
+
+    internal bool IsDisposed => _signingKey is null;
 
     public static JwtOptions FromDataEncryptionKey(string encodedKey) =>
         new(DeriveSigningKey(encodedKey));
@@ -56,9 +70,56 @@ public sealed class JwtOptions : IDisposable
             _signingKey = null;
         }
 
-        if (ValidationKey is SymmetricSecurityKey validationKey)
+    }
+}
+
+public sealed class ConfigureJwtBearerOptions(JwtOptions jwtOptions) : IConfigureNamedOptions<JwtBearerOptions>
+{
+    public void Configure(JwtBearerOptions options) =>
+        Configure(JwtBearerDefaults.AuthenticationScheme, options);
+
+    public void Configure(string? name, JwtBearerOptions options)
+    {
+        if (!string.Equals(name, JwtBearerDefaults.AuthenticationScheme, StringComparison.Ordinal))
         {
-            CryptographicOperations.ZeroMemory(validationKey.Key);
+            return;
         }
+
+        options.MapInboundClaims = false;
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = JwtOptions.Issuer,
+            ValidateAudience = true,
+            ValidAudience = JwtOptions.Audience,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKeyResolver = (_, _, _, _) => [jwtOptions.CreateValidationKey()],
+            RequireExpirationTime = true,
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.FromSeconds(30),
+            NameClaimType = "sub",
+            RoleClaimType = "role",
+        };
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                var subject = context.Principal?.FindFirst("sub")?.Value;
+                if (!Guid.TryParse(subject, out var userId))
+                {
+                    context.Fail("account_not_active");
+                    return;
+                }
+
+                var db = context.HttpContext.RequestServices.GetRequiredService<ApiDbContext>();
+                var active = await db.Users.AnyAsync(
+                    user => user.Id == userId && user.EmailVerified && !user.Disabled,
+                    context.HttpContext.RequestAborted);
+                if (!active)
+                {
+                    context.Fail("account_not_active");
+                }
+            },
+        };
     }
 }

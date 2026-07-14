@@ -46,6 +46,17 @@ public sealed class DeviceSessionEntity
     public UserEntity? User { get; set; }
 }
 
+public sealed class ConsumedRefreshTokenEntity
+{
+    public required string TokenHash { get; set; }
+
+    public Guid SessionId { get; set; }
+
+    public DateTimeOffset ConsumedAtUtc { get; set; }
+
+    public DateTimeOffset ExpiresAtUtc { get; set; }
+}
+
 public sealed class SyncRecordEntity
 {
     public Guid UserId { get; set; }

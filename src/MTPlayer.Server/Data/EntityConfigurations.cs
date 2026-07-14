@@ -55,6 +55,18 @@ internal sealed class SyncRecordEntityConfiguration : IEntityTypeConfiguration<S
     }
 }
 
+internal sealed class ConsumedRefreshTokenEntityConfiguration : IEntityTypeConfiguration<ConsumedRefreshTokenEntity>
+{
+    public void Configure(EntityTypeBuilder<ConsumedRefreshTokenEntity> builder)
+    {
+        builder.ToTable("consumed_refresh_tokens");
+        builder.HasKey(token => token.TokenHash);
+        builder.Property(token => token.TokenHash).HasMaxLength(64);
+        builder.HasIndex(token => token.ExpiresAtUtc);
+        builder.HasIndex(token => token.SessionId);
+    }
+}
+
 internal sealed class ChangeLogEntityConfiguration : IEntityTypeConfiguration<ChangeLogEntity>
 {
     public void Configure(EntityTypeBuilder<ChangeLogEntity> builder)

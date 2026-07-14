@@ -23,8 +23,7 @@ public static class AuthEndpoints
         CancellationToken cancellationToken) =>
         await auth.RegisterAsync(request, cancellationToken) switch
         {
-            AuthStatus.Accepted => Results.Accepted(),
-            AuthStatus.DuplicateEmail => Problem(context, "email_already_registered", "该邮箱已注册。", StatusCodes.Status409Conflict),
+            AuthStatus.Accepted => Accepted(context, "如果该邮箱可注册，将收到验证邮件。"),
             _ => Problem(context, "invalid_registration", "邮箱格式无效，或密码长度不在 10 到 128 个字符之间。", StatusCodes.Status400BadRequest),
         };
 
@@ -48,6 +47,7 @@ public static class AuthEndpoints
         {
             AuthStatus.Success => Results.Ok(result.Tokens),
             AuthStatus.Disabled => Problem(context, "account_disabled", "账号已被禁用。", StatusCodes.Status403Forbidden),
+            AuthStatus.VerificationRequired => Problem(context, "verification_required", "请先完成邮箱验证。", StatusCodes.Status403Forbidden),
             AuthStatus.InvalidInput => Problem(context, "invalid_login", "登录信息格式无效。", StatusCodes.Status400BadRequest),
             _ => Problem(context, "invalid_credentials", "邮箱或密码错误。", StatusCodes.Status401Unauthorized),
         };
@@ -71,13 +71,11 @@ public static class AuthEndpoints
     private static async Task<IResult> ForgotPasswordAsync(
         ForgotPasswordRequest request,
         AuthService auth,
+        HttpContext context,
         CancellationToken cancellationToken)
     {
         await auth.ForgotPasswordAsync(request.Email, cancellationToken);
-        return Results.Accepted(value: new
-        {
-            message = "如果该邮箱存在，将收到密码重置邮件。",
-        });
+        return Accepted(context, "如果该邮箱存在，将收到密码重置邮件。");
     }
 
     private static async Task<IResult> ResetPasswordAsync(
@@ -104,6 +102,13 @@ public static class AuthEndpoints
                 ["code"] = code,
                 ["traceId"] = context.TraceIdentifier,
             });
+
+    private static IResult Accepted(HttpContext context, string message) =>
+        Results.Accepted(value: new
+        {
+            message,
+            traceId = context.TraceIdentifier,
+        });
 }
 
 public sealed record VerifyEmailRequest(string Token)

@@ -22,12 +22,13 @@ public sealed class ApiDbContextTests
     }
 
     [Fact]
-    public void Context_exposes_the_eight_planned_business_tables()
+    public void Context_exposes_business_tables_including_refresh_replay_history()
     {
         using var db = TestDb.CreateContext();
 
         Assert.NotNull(db.Users);
         Assert.NotNull(db.DeviceSessions);
+        Assert.NotNull(db.ConsumedRefreshTokens);
         Assert.NotNull(db.SyncRecords);
         Assert.NotNull(db.ChangeLog);
         Assert.NotNull(db.EmailTokens);
@@ -203,6 +204,24 @@ public sealed class ApiDbContextTests
         Assert.Equal("device_sessions", operation.Table);
         Assert.Equal(nameof(DeviceSessionEntity.ExpiresAtUtc), operation.Name);
         Assert.False(operation.IsNullable);
+    }
+
+    [Fact]
+    public void Refresh_replay_migration_adds_consumed_token_history_table()
+    {
+        using var db = TestDb.CreateContext();
+        var migrations = db.GetService<IMigrationsAssembly>();
+        var migrationId = Assert.Single(
+            migrations.Migrations.Keys,
+            id => id.EndsWith("_AddConsumedRefreshTokens", StringComparison.Ordinal));
+        var migration = migrations.CreateMigration(
+            migrations.Migrations[migrationId],
+            db.Database.ProviderName!);
+
+        var operation = Assert.Single(migration.UpOperations.OfType<CreateTableOperation>());
+        Assert.Equal("consumed_refresh_tokens", operation.Name);
+        Assert.Contains(operation.Columns, column => column.Name == nameof(ConsumedRefreshTokenEntity.TokenHash));
+        Assert.Contains(operation.Columns, column => column.Name == nameof(ConsumedRefreshTokenEntity.SessionId));
     }
 
     private static void AssertIndex(ApiDbContext db, Type entityType, params string[] propertyNames)

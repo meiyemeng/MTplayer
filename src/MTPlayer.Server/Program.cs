@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
+using Microsoft.Extensions.Options;
 using MTPlayer.Server.Auth;
 using MTPlayer.Server.Data;
 using MTPlayer.Server.Security;
@@ -37,38 +37,36 @@ builder.Services.AddSingleton<ISecretProtector>(
     _ => new AesGcmSecretProtector(dataEncryptionKey));
 builder.Services.AddSingleton<PasswordHasher>();
 builder.Services.AddSingleton<TokenFactory>();
-var jwtOptions = JwtOptions.FromDataEncryptionKey(dataEncryptionKey);
-builder.Services.AddSingleton(jwtOptions);
+builder.Services.AddSingleton(_ => JwtOptions.FromDataEncryptionKey(dataEncryptionKey));
+builder.Services.AddSingleton<IConfigureOptions<JwtBearerOptions>, ConfigureJwtBearerOptions>();
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        options.MapInboundClaims = false;
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidIssuer = JwtOptions.Issuer,
-            ValidateAudience = true,
-            ValidAudience = JwtOptions.Audience,
-            ValidateIssuerSigningKey = true,
-            IssuerSigningKey = jwtOptions.ValidationKey,
-            RequireExpirationTime = true,
-            ValidateLifetime = true,
-            ClockSkew = TimeSpan.FromSeconds(30),
-            NameClaimType = "sub",
-            RoleClaimType = "role",
-        };
-    });
+    .AddJwtBearer();
 builder.Services.AddAuthorization(options =>
+{
+    options.DefaultPolicy = new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme)
+        .RequireAuthenticatedUser()
+        .Build();
     options.AddPolicy("sync-access", policy =>
     {
+        policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
         policy.RequireAuthenticatedUser();
         policy.AddRequirements(new SyncAccessRequirement());
-    }));
+    });
+});
 builder.Services.AddScoped<IAuthorizationHandler, SyncAccessHandler>();
 builder.Services.AddScoped<CurrentUser>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton(serviceProvider => new Argon2PasswordService(
+    serviceProvider.GetRequiredService<PasswordHasher>(),
+    Math.Clamp(builder.Configuration.GetValue<int?>("Security:Argon2MaxConcurrency") ?? 2, 1, 4)));
+builder.Services.AddSingleton(serviceProvider => new AuthTiming(
+    serviceProvider.GetRequiredService<TimeProvider>(),
+    TimeSpan.FromMilliseconds(Math.Clamp(
+        builder.Configuration.GetValue<int?>("Security:MinimumAuthResponseMilliseconds") ?? 100,
+        25,
+        1_000))));
 builder.Services.AddProblemDetails();
 builder.Services.AddRateLimiter(options =>
 {
@@ -108,6 +106,7 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 _ = app.Services.GetRequiredService<ISecretProtector>();
+_ = app.Services.GetRequiredService<Argon2PasswordService>();
 
 app.UseExceptionHandler();
 app.UseRateLimiter();

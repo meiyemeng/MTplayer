@@ -319,6 +319,21 @@ public sealed class SecurityTests
         Assert.Throws<ObjectDisposedException>(() => protector.Protect("secret"));
     }
 
+    [Fact]
+    public async Task Dependency_injection_owns_and_clears_derived_jwt_key_material_on_shutdown()
+    {
+        var factory = CreateFactory(TestPostgreSqlConnectionString, TestDataEncryptionKey);
+        var jwt = factory.Services.GetRequiredService<JwtOptions>();
+        Assert.False(jwt.IsKeyMaterialCleared);
+
+        await factory.DisposeAsync();
+
+        Assert.True(jwt.IsDisposed);
+        Assert.True(jwt.IsKeyMaterialCleared);
+        Assert.Throws<ObjectDisposedException>(() => jwt.SigningCredentials);
+        Assert.Throws<ObjectDisposedException>(() => jwt.CreateValidationKey());
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("not-base64")]

@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization.Policy;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -14,6 +15,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MTPlayer.Contracts;
+using MTPlayer.Server.Auth;
 using MTPlayer.Server.Data;
 using MTPlayer.Server.Security;
 using Npgsql;
@@ -40,7 +42,8 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
             new LoginRequest(email, PostgreSqlAuthFixture.Password, "测试电脑", "windows"));
         var pair = await ReadTokenPairAsync(login);
         Assert.InRange(pair.ExpiresAtUtc, DateTimeOffset.UtcNow.AddMinutes(14), DateTimeOffset.UtcNow.AddMinutes(16));
-        Assert.True(await fixture.IsJwtAcceptedAsync(pair.AccessToken));
+        Assert.True(await fixture.IsJwtAcceptedAsync(pair.AccessToken), fixture.LastAuthenticationFailure);
+        Assert.Equal(HttpStatusCode.OK, await fixture.AuthorizeWithDefaultPolicyAsync(pair.AccessToken));
         Assert.True(await fixture.CanSyncAsync(pair.AccessToken));
         await using (var db = fixture.CreateDbContext())
         {
@@ -57,26 +60,40 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
             new RefreshRequest(pair.RefreshToken));
         var rotated = await ReadTokenPairAsync(firstRefresh);
         Assert.NotEqual(pair.RefreshToken, rotated.RefreshToken);
+        await using (var db = fixture.CreateDbContext())
+        {
+            var consumedHash = new TokenFactory().HashToken(pair.RefreshToken);
+            Assert.True(await db.ConsumedRefreshTokens.AnyAsync(token => token.TokenHash == consumedHash));
+        }
 
         var reuse = await fixture.Client.PostAsJsonAsync(
             "/api/v1/auth/refresh",
             new RefreshRequest(pair.RefreshToken));
         Assert.Equal(HttpStatusCode.Unauthorized, reuse.StatusCode);
+        var familyRevoked = await fixture.Client.PostAsJsonAsync(
+            "/api/v1/auth/refresh",
+            new RefreshRequest(rotated.RefreshToken));
+        Assert.Equal(HttpStatusCode.Unauthorized, familyRevoked.StatusCode);
     }
 
     [DockerFact]
-    public async Task Registration_normalizes_email_and_database_constraint_rejects_duplicates()
+    public async Task Registration_normalizes_email_and_does_not_expose_duplicates()
     {
         var local = $"CASE-{Guid.NewGuid():N}";
+        var firstStopwatch = Stopwatch.StartNew();
         var first = await fixture.Client.PostAsJsonAsync(
             "/api/v1/auth/register",
             new RegisterRequest($"  {local}@Example.com  ", PostgreSqlAuthFixture.Password));
+        firstStopwatch.Stop();
+        var duplicateStopwatch = Stopwatch.StartNew();
         var duplicate = await fixture.Client.PostAsJsonAsync(
             "/api/v1/auth/register",
             new RegisterRequest($"{local.ToLowerInvariant()}@example.COM", PostgreSqlAuthFixture.Password));
+        duplicateStopwatch.Stop();
 
-        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+        await AssertAcceptedResponseAsync(first, "如果该邮箱可注册，将收到验证邮件。");
+        await AssertAcceptedResponseAsync(duplicate, "如果该邮箱可注册，将收到验证邮件。");
+        Assert.True((firstStopwatch.Elapsed - duplicateStopwatch.Elapsed).Duration() < TimeSpan.FromSeconds(1));
         await using var db = fixture.CreateDbContext();
         var expectedNormalized = PostgreSqlAuthFixture.NormalizeEmail($"{local}@Example.com");
         var user = await db.Users.SingleAsync(user => user.NormalizedEmail == expectedNormalized);
@@ -85,7 +102,7 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
     }
 
     [DockerFact]
-    public async Task Concurrent_duplicate_registration_has_exactly_one_database_winner()
+    public async Task Concurrent_duplicate_registration_has_one_database_winner_and_identical_external_status()
     {
         var email = UniqueEmail();
         var responses = await Task.WhenAll(
@@ -96,8 +113,11 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
                 "/api/v1/auth/register",
                 new RegisterRequest($"  {email.ToUpperInvariant()}  ", PostgreSqlAuthFixture.Password)));
 
-        Assert.Equal(1, responses.Count(response => response.StatusCode == HttpStatusCode.Accepted));
-        Assert.Equal(1, responses.Count(response => response.StatusCode == HttpStatusCode.Conflict));
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.Accepted, response.StatusCode));
+        foreach (var response in responses)
+        {
+            await AssertAcceptedResponseAsync(response, "如果该邮箱可注册，将收到验证邮件。");
+        }
         await using var db = fixture.CreateDbContext();
         var normalizedEmail = PostgreSqlAuthFixture.NormalizeEmail(email);
         var user = await db.Users.SingleAsync(value => value.NormalizedEmail == normalizedEmail);
@@ -126,6 +146,20 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
     }
 
     [DockerFact]
+    public async Task Argon2_work_has_a_process_wide_concurrency_ceiling()
+    {
+        var service = fixture.Factory.Services.GetRequiredService<Argon2PasswordService>();
+        service.ResetPeakConcurrencyForTests();
+        await Assert.ThrowsAsync<ArgumentException>(() => service.HashAsync("short", CancellationToken.None));
+        Assert.Equal(0, service.PeakObservedConcurrency);
+        await Task.WhenAll(Enumerable.Range(0, 6).Select(index =>
+            service.HashAsync($"Concurrent-Password-{index}-2026", CancellationToken.None)));
+
+        Assert.InRange(service.PeakObservedConcurrency, 1, service.MaximumConcurrency);
+        Assert.Equal(2, service.MaximumConcurrency);
+    }
+
+    [DockerFact]
     public async Task Verification_tokens_are_hashed_expiring_and_single_use()
     {
         var email = UniqueEmail();
@@ -142,6 +176,10 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
             Assert.NotEqual(token, stored.TokenHash);
             Assert.True(new TokenFactory().VerifyToken(token, stored.TokenHash));
             Assert.InRange(stored.ExpiresAtUtc, DateTimeOffset.UtcNow.AddMinutes(55), DateTimeOffset.UtcNow.AddMinutes(65));
+            var outbox = await db.MailOutbox.SingleAsync(message => message.RecipientEmail == email);
+            Assert.StartsWith("enc:v1:", outbox.BodyHtml, StringComparison.Ordinal);
+            Assert.DoesNotContain(token, outbox.BodyHtml, StringComparison.Ordinal);
+            Assert.Equal($"verify:{token}", fixture.DecryptOutboxBody(outbox.BodyHtml));
         }
 
         var first = await fixture.Client.PostAsJsonAsync("/api/v1/auth/verify-email", new { token });
@@ -160,7 +198,7 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
     }
 
     [DockerFact]
-    public async Task Unverified_login_has_no_refresh_session_or_sync_capability()
+    public async Task Unverified_login_returns_verification_required_without_any_tokens()
     {
         var email = UniqueEmail();
         await fixture.Client.PostAsJsonAsync(
@@ -170,20 +208,71 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
         var login = await fixture.Client.PostAsJsonAsync(
             "/api/v1/auth/login",
             new LoginRequest(email, PostgreSqlAuthFixture.Password, "未验证电脑", "windows"));
-        var pair = await ReadTokenPairAsync(login);
-        var claims = ReadJwtPayload(pair.AccessToken);
-
-        Assert.False(pair.EmailVerified);
-        Assert.Empty(pair.RefreshToken);
-        Assert.Equal("false", claims.GetProperty("email_verified").GetString());
-        Assert.DoesNotContain("sync", claims.GetProperty("scope").GetString()!, StringComparison.Ordinal);
-        Assert.False(await fixture.CanSyncAsync(pair.AccessToken));
+        Assert.Equal(HttpStatusCode.Forbidden, login.StatusCode);
+        var problem = await login.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("verification_required", problem.GetProperty("code").GetString());
+        var body = problem.GetRawText();
+        Assert.DoesNotContain("accessToken", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("refreshToken", body, StringComparison.OrdinalIgnoreCase);
         await using var db = fixture.CreateDbContext();
         var normalizedEmail = PostgreSqlAuthFixture.NormalizeEmail(email);
         var userId = await db.Users.Where(user => user.NormalizedEmail == normalizedEmail).Select(user => user.Id).SingleAsync();
         Assert.False(await db.DeviceSessions.AnyAsync(session => session.UserId == userId));
-        Assert.Equal(2, await db.EmailTokens.CountAsync(
+        Assert.Equal(1, await db.EmailTokens.CountAsync(
             token => token.UserId == userId && token.Purpose == "verify"));
+    }
+
+    [DockerFact]
+    public async Task Verification_cooldown_prevents_flooding_and_reissue_invalidates_the_old_token()
+    {
+        var email = UniqueEmail();
+        await fixture.Client.PostAsJsonAsync(
+            "/api/v1/auth/register",
+            new RegisterRequest(email, PostgreSqlAuthFixture.Password));
+        var firstToken = await fixture.ReadLatestEmailTokenAsync(email, "verify");
+
+        var withinCooldown = await fixture.Client.PostAsJsonAsync(
+            "/api/v1/auth/login",
+            new LoginRequest(email, PostgreSqlAuthFixture.Password, "冷却电脑", "windows"));
+        Assert.Equal(HttpStatusCode.Forbidden, withinCooldown.StatusCode);
+        await fixture.AgeEmailTokensAsync(email, "verify", TimeSpan.FromSeconds(61));
+        var afterCooldown = await fixture.Client.PostAsJsonAsync(
+            "/api/v1/auth/login",
+            new LoginRequest(email, PostgreSqlAuthFixture.Password, "冷却电脑", "windows"));
+        Assert.Equal(HttpStatusCode.Forbidden, afterCooldown.StatusCode);
+        var secondToken = await fixture.ReadLatestEmailTokenAsync(email, "verify");
+
+        Assert.NotEqual(firstToken, secondToken);
+        var oldVerification = await fixture.Client.PostAsJsonAsync("/api/v1/auth/verify-email", new { token = firstToken });
+        var newVerification = await fixture.Client.PostAsJsonAsync("/api/v1/auth/verify-email", new { token = secondToken });
+        Assert.Equal(HttpStatusCode.BadRequest, oldVerification.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, newVerification.StatusCode);
+        await using var db = fixture.CreateDbContext();
+        var normalizedEmail = PostgreSqlAuthFixture.NormalizeEmail(email);
+        var userId = await db.Users.Where(user => user.NormalizedEmail == normalizedEmail).Select(user => user.Id).SingleAsync();
+        Assert.Equal(2, await db.EmailTokens.CountAsync(token => token.UserId == userId && token.Purpose == "verify"));
+        Assert.Equal(2, await db.MailOutbox.CountAsync(message => message.RecipientEmail == email));
+    }
+
+    [DockerFact]
+    public async Task Missing_and_existing_login_paths_both_run_bounded_password_verification()
+    {
+        var email = UniqueEmail();
+        await fixture.RegisterAndVerifyAsync(email);
+        var samples = new List<(HttpResponseMessage Response, TimeSpan Elapsed)>();
+        foreach (var candidate in new[] { email, UniqueEmail() })
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var response = await fixture.Client.PostAsJsonAsync(
+                "/api/v1/auth/login",
+                new LoginRequest(candidate, "Wrong-Password-2026", "电脑", "windows"));
+            stopwatch.Stop();
+            samples.Add((response, stopwatch.Elapsed));
+        }
+
+        Assert.All(samples, sample => Assert.Equal(HttpStatusCode.Unauthorized, sample.Response.StatusCode));
+        Assert.All(samples, sample => Assert.True(sample.Elapsed >= TimeSpan.FromMilliseconds(75)));
+        Assert.True(samples.Max(sample => sample.Elapsed) - samples.Min(sample => sample.Elapsed) < TimeSpan.FromSeconds(1));
     }
 
     [DockerFact]
@@ -197,6 +286,8 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
         var pair = await ReadTokenPairAsync(login);
         await fixture.SetDisabledAsync(email, true);
         Assert.False(await fixture.CanSyncAsync(pair.AccessToken));
+        Assert.False(await fixture.IsJwtAcceptedAsync(pair.AccessToken));
+        Assert.Equal(HttpStatusCode.Unauthorized, await fixture.AuthorizeWithDefaultPolicyAsync(pair.AccessToken));
 
         var disabledLogin = await fixture.Client.PostAsJsonAsync(
             "/api/v1/auth/login",
@@ -207,25 +298,53 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
 
         Assert.Equal(HttpStatusCode.Forbidden, disabledLogin.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, disabledRefresh.StatusCode);
+
+        await fixture.SetDisabledAsync(email, false);
+        await fixture.SetEmailVerifiedAsync(email, false);
+        Assert.False(await fixture.IsJwtAcceptedAsync(pair.AccessToken));
+        Assert.Equal(HttpStatusCode.Unauthorized, await fixture.AuthorizeWithDefaultPolicyAsync(pair.AccessToken));
     }
 
     [DockerFact]
-    public async Task Forgot_password_does_not_reveal_whether_email_exists()
+    public async Task Forgot_password_invalid_missing_and_existing_inputs_share_response_and_coarse_timing()
     {
         var email = UniqueEmail();
         await fixture.RegisterAndVerifyAsync(email);
         var missing = UniqueEmail();
 
-        var existingResponse = await fixture.Client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email });
-        var missingResponse = await fixture.Client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email = missing });
+        var samples = new List<(HttpResponseMessage Response, TimeSpan Elapsed)>();
+        foreach (var candidate in new[] { email, missing, "not-an-email" })
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var response = await fixture.Client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email = candidate });
+            stopwatch.Stop();
+            samples.Add((response, stopwatch.Elapsed));
+            await AssertAcceptedResponseAsync(response, "如果该邮箱存在，将收到密码重置邮件。");
+        }
 
-        Assert.Equal(existingResponse.StatusCode, missingResponse.StatusCode);
-        Assert.Equal(await existingResponse.Content.ReadAsStringAsync(), await missingResponse.Content.ReadAsStringAsync());
+        Assert.All(samples, sample => Assert.True(sample.Elapsed >= TimeSpan.FromMilliseconds(75)));
+        Assert.True(samples.Max(sample => sample.Elapsed) - samples.Min(sample => sample.Elapsed) < TimeSpan.FromMilliseconds(500));
         await using var db = fixture.CreateDbContext();
         var normalizedEmail = PostgreSqlAuthFixture.NormalizeEmail(email);
         var normalizedMissing = PostgreSqlAuthFixture.NormalizeEmail(missing);
         Assert.True(await db.EmailTokens.AnyAsync(token => token.Purpose == "reset" && token.User!.NormalizedEmail == normalizedEmail));
         Assert.False(await db.EmailTokens.AnyAsync(token => token.Purpose == "reset" && token.User!.NormalizedEmail == normalizedMissing));
+    }
+
+    [DockerFact]
+    public async Task Concurrent_forgot_password_requests_create_only_one_token_and_outbox_record()
+    {
+        var email = UniqueEmail();
+        await fixture.RegisterAndVerifyAsync(email);
+        var responses = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+            fixture.Client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email })));
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.Accepted, response.StatusCode));
+
+        await using var db = fixture.CreateDbContext();
+        var normalizedEmail = PostgreSqlAuthFixture.NormalizeEmail(email);
+        var userId = await db.Users.Where(user => user.NormalizedEmail == normalizedEmail).Select(user => user.Id).SingleAsync();
+        Assert.Equal(1, await db.EmailTokens.CountAsync(token => token.UserId == userId && token.Purpose == "reset"));
+        Assert.Equal(2, await db.MailOutbox.CountAsync(message => message.RecipientEmail == email));
     }
 
     [DockerFact]
@@ -247,7 +366,15 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
             Assert.NotEqual(resetToken, stored.TokenHash);
             Assert.True(new TokenFactory().VerifyToken(resetToken, stored.TokenHash));
             Assert.InRange(stored.ExpiresAtUtc, DateTimeOffset.UtcNow.AddMinutes(25), DateTimeOffset.UtcNow.AddMinutes(35));
+            var outbox = await db.MailOutbox
+                .Where(message => message.RecipientEmail == email)
+                .OrderByDescending(message => message.Id)
+                .FirstAsync();
+            Assert.StartsWith("enc:v1:", outbox.BodyHtml, StringComparison.Ordinal);
+            Assert.DoesNotContain(resetToken, outbox.BodyHtml, StringComparison.Ordinal);
+            Assert.Equal($"reset:{resetToken}", fixture.DecryptOutboxBody(outbox.BodyHtml));
         }
+        var parallelResetToken = await fixture.InsertResetTokenAsync(email);
         const string newPassword = "New-Correct-Horse-2026";
 
         var reset = await fixture.Client.PostAsJsonAsync(
@@ -256,6 +383,9 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
         var reuse = await fixture.Client.PostAsJsonAsync(
             "/api/v1/auth/reset-password",
             new { token = resetToken, password = "Another-Password-2026" });
+        var parallelReuse = await fixture.Client.PostAsJsonAsync(
+            "/api/v1/auth/reset-password",
+            new { token = parallelResetToken, password = "Another-Password-2026" });
         var oldRefresh = await fixture.Client.PostAsJsonAsync(
             "/api/v1/auth/refresh",
             new RefreshRequest(oldPair.RefreshToken));
@@ -268,9 +398,16 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
 
         Assert.Equal(HttpStatusCode.NoContent, reset.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, reuse.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, parallelReuse.StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, oldRefresh.StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, oldLogin.StatusCode);
         Assert.Equal(HttpStatusCode.OK, newLogin.StatusCode);
+        await using var resetDb = fixture.CreateDbContext();
+        var normalizedEmailAfterReset = PostgreSqlAuthFixture.NormalizeEmail(email);
+        Assert.False(await resetDb.EmailTokens.AnyAsync(
+            token => token.Purpose == "reset" &&
+                token.User!.NormalizedEmail == normalizedEmailAfterReset &&
+                token.UsedAtUtc == null));
     }
 
     [DockerFact]
@@ -308,6 +445,21 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
         }
 
         await fixture.DeleteSettingAsync("PasswordResetTokenExpiryMinutes");
+
+        await fixture.SetSettingAsync("EmailTokenCooldownSeconds", "10");
+        await fixture.AgeEmailTokensAsync(email, "verify", TimeSpan.FromSeconds(11));
+        var reissue = await fixture.Client.PostAsJsonAsync(
+            "/api/v1/auth/login",
+            new LoginRequest(email, PostgreSqlAuthFixture.Password, "设置电脑", "windows"));
+        Assert.Equal(HttpStatusCode.Forbidden, reissue.StatusCode);
+        await using (var db = fixture.CreateDbContext())
+        {
+            var normalizedEmail = PostgreSqlAuthFixture.NormalizeEmail(email);
+            Assert.Equal(2, await db.EmailTokens.CountAsync(
+                token => token.Purpose == "verify" && token.User!.NormalizedEmail == normalizedEmail));
+        }
+
+        await fixture.DeleteSettingAsync("EmailTokenCooldownSeconds");
     }
 
     [DockerFact]
@@ -326,6 +478,26 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
 
         Assert.Equal(1, responses.Count(response => response.StatusCode == HttpStatusCode.OK));
         Assert.Equal(1, responses.Count(response => response.StatusCode == HttpStatusCode.Unauthorized));
+        var winner = responses.Single(response => response.StatusCode == HttpStatusCode.OK);
+        var winnerPair = (await winner.Content.ReadFromJsonAsync<TokenResponse>())!;
+        var revokedWinner = await fixture.Client.PostAsJsonAsync(
+            "/api/v1/auth/refresh",
+            new RefreshRequest(winnerPair.RefreshToken));
+        Assert.Equal(HttpStatusCode.Unauthorized, revokedWinner.StatusCode);
+    }
+
+    [DockerFact]
+    public async Task Disable_committed_during_refresh_prevents_any_successful_token_response()
+    {
+        var email = UniqueEmail();
+        await fixture.RegisterAndVerifyAsync(email);
+        var login = await fixture.Client.PostAsJsonAsync(
+            "/api/v1/auth/login",
+            new LoginRequest(email, PostgreSqlAuthFixture.Password, "竞态电脑", "windows"));
+        var pair = await ReadTokenPairAsync(login);
+
+        var refresh = await fixture.DisableWhileRefreshWaitsAsync(email, pair.RefreshToken);
+        Assert.Equal(HttpStatusCode.Forbidden, refresh.StatusCode);
     }
 
     [DockerFact]
@@ -407,16 +579,21 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
         fixture.Logs.Clear();
         var email = UniqueEmail();
         await fixture.RegisterAndVerifyAsync(email);
+        var verificationToken = await fixture.ReadLatestEmailTokenAsync(email, "verify");
         var login = await fixture.Client.PostAsJsonAsync(
             "/api/v1/auth/login",
             new LoginRequest(email, PostgreSqlAuthFixture.Password, "日志电脑", "windows"));
         var pair = await ReadTokenPairAsync(login);
+        await fixture.Client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email });
+        var resetToken = await fixture.ReadLatestEmailTokenAsync(email, "reset");
         await fixture.Client.PostAsJsonAsync("/api/v1/auth/refresh", new RefreshRequest(pair.RefreshToken));
         var allLogs = string.Join('\n', fixture.Logs.Messages);
 
         Assert.DoesNotContain(PostgreSqlAuthFixture.Password, allLogs, StringComparison.Ordinal);
         Assert.DoesNotContain(pair.AccessToken, allLogs, StringComparison.Ordinal);
         Assert.DoesNotContain(pair.RefreshToken, allLogs, StringComparison.Ordinal);
+        Assert.DoesNotContain(verificationToken, allLogs, StringComparison.Ordinal);
+        Assert.DoesNotContain(resetToken, allLogs, StringComparison.Ordinal);
     }
 
     private static string UniqueEmail() => $"auth-{Guid.NewGuid():N}@example.com";
@@ -425,6 +602,16 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
     {
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return (await response.Content.ReadFromJsonAsync<TokenResponse>())!;
+    }
+
+    private static async Task AssertAcceptedResponseAsync(HttpResponseMessage response, string expectedMessage)
+    {
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(expectedMessage, body.GetProperty("message").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(body.GetProperty("traceId").GetString()));
+        Assert.Equal(["message", "traceId"], body.EnumerateObject().Select(property => property.Name).Order());
     }
 
     private static JsonElement ReadJwtPayload(string token)
@@ -447,11 +634,17 @@ public sealed class PostgreSqlAuthFixture : IAsyncLifetime
     public CapturingLoggerProvider Logs { get; } = new();
     public string ConnectionString { get; private set; } = string.Empty;
     public Version PostgreSqlVersion { get; private set; } = new();
+    public string? LastAuthenticationFailure { get; private set; }
 
     public async Task InitializeAsync()
     {
         if (!DockerProcess.IsAvailable())
         {
+            if (DockerProcess.IsRequiredForAcceptance())
+            {
+                throw new InvalidOperationException("Docker is required for MTPlayer real PostgreSQL acceptance tests.");
+            }
+
             return;
         }
 
@@ -527,12 +720,22 @@ public sealed class PostgreSqlAuthFixture : IAsyncLifetime
     public async Task<string> ReadLatestEmailTokenAsync(string email, string purpose)
     {
         await using var db = CreateDbContext();
-        var body = await db.MailOutbox
+        var bodies = await db.MailOutbox
             .Where(message => message.RecipientEmail == email.Trim())
             .OrderByDescending(message => message.Id)
             .Select(message => message.BodyHtml)
-            .FirstAsync(message => message.StartsWith($"{purpose}:"));
-        return body[(purpose.Length + 1)..];
+            .ToListAsync();
+        var payload = bodies.Select(DecryptOutboxBody)
+            .First(value => value.StartsWith($"{purpose}:", StringComparison.Ordinal));
+        return payload[(purpose.Length + 1)..];
+    }
+
+    public string DecryptOutboxBody(string body)
+    {
+        const string prefix = "enc:v1:";
+        Assert.StartsWith(prefix, body, StringComparison.Ordinal);
+        var protector = Factory.Services.GetRequiredService<ISecretProtector>();
+        return protector.Unprotect(body[prefix.Length..]);
     }
 
     public async Task ExpireEmailTokenAsync(string email, string purpose)
@@ -551,6 +754,62 @@ public sealed class PostgreSqlAuthFixture : IAsyncLifetime
         await db.Users
             .Where(user => user.NormalizedEmail == normalizedEmail)
             .ExecuteUpdateAsync(update => update.SetProperty(user => user.Disabled, disabled));
+    }
+
+    public async Task SetEmailVerifiedAsync(string email, bool verified)
+    {
+        await using var db = CreateDbContext();
+        var normalizedEmail = NormalizeEmail(email);
+        await db.Users
+            .Where(user => user.NormalizedEmail == normalizedEmail)
+            .ExecuteUpdateAsync(update => update.SetProperty(user => user.EmailVerified, verified));
+    }
+
+    public async Task<string> InsertResetTokenAsync(string email)
+    {
+        var tokenFactory = new TokenFactory();
+        var token = tokenFactory.CreateRefreshToken();
+        await using var db = CreateDbContext();
+        var normalizedEmail = NormalizeEmail(email);
+        var userId = await db.Users
+            .Where(user => user.NormalizedEmail == normalizedEmail)
+            .Select(user => user.Id)
+            .SingleAsync();
+        db.EmailTokens.Add(new EmailTokenEntity
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            TokenHash = tokenFactory.HashToken(token),
+            Purpose = "reset",
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(30),
+        });
+        await db.SaveChangesAsync();
+        return token;
+    }
+
+    public async Task AgeEmailTokensAsync(string email, string purpose, TimeSpan age)
+    {
+        await using var db = CreateDbContext();
+        var normalizedEmail = NormalizeEmail(email);
+        var createdAtUtc = DateTimeOffset.UtcNow.Subtract(age);
+        await db.EmailTokens
+            .Where(token => token.Purpose == purpose && token.User!.NormalizedEmail == normalizedEmail)
+            .ExecuteUpdateAsync(update => update.SetProperty(token => token.CreatedAtUtc, createdAtUtc));
+    }
+
+    public async Task<HttpResponseMessage> DisableWhileRefreshWaitsAsync(string email, string refreshToken)
+    {
+        await using var db = CreateDbContext();
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        var normalizedEmail = NormalizeEmail(email);
+        await db.Users
+            .Where(user => user.NormalizedEmail == normalizedEmail)
+            .ExecuteUpdateAsync(update => update.SetProperty(user => user.Disabled, true));
+        var refreshTask = Client.PostAsJsonAsync("/api/v1/auth/refresh", new RefreshRequest(refreshToken));
+        await Task.Delay(150);
+        await transaction.CommitAsync();
+        return await refreshTask;
     }
 
     public async Task SetSettingAsync(string key, string value)
@@ -608,7 +867,26 @@ public sealed class PostgreSqlAuthFixture : IAsyncLifetime
         };
         context.Request.Headers.Authorization = $"Bearer {accessToken}";
         var result = await context.AuthenticateAsync();
+        LastAuthenticationFailure = result.Failure?.ToString();
         return result.Succeeded;
+    }
+
+    public async Task<HttpStatusCode> AuthorizeWithDefaultPolicyAsync(string accessToken)
+    {
+        await using var scope = Factory.Services.CreateAsyncScope();
+        var context = new DefaultHttpContext { RequestServices = scope.ServiceProvider };
+        context.Request.Headers.Authorization = $"Bearer {accessToken}";
+        var policy = await scope.ServiceProvider
+            .GetRequiredService<IAuthorizationPolicyProvider>()
+            .GetDefaultPolicyAsync();
+        var evaluator = scope.ServiceProvider.GetRequiredService<IPolicyEvaluator>();
+        var authentication = await evaluator.AuthenticateAsync(policy, context);
+        var authorization = await evaluator.AuthorizeAsync(policy, authentication, context, resource: null);
+        return authorization.Succeeded
+            ? HttpStatusCode.OK
+            : authorization.Challenged
+                ? HttpStatusCode.Unauthorized
+                : HttpStatusCode.Forbidden;
     }
 
     private static JsonElement ReadPayload(string token)
@@ -648,7 +926,7 @@ public sealed class DockerFactAttribute : FactAttribute
 
     public DockerFactAttribute()
     {
-        if (!DockerAvailable.Value)
+        if (!DockerAvailable.Value && !DockerProcess.IsRequiredForAcceptance())
         {
             Skip = "Docker is unavailable; real PostgreSQL 16 integration test skipped.";
         }
@@ -657,6 +935,12 @@ public sealed class DockerFactAttribute : FactAttribute
 
 internal static class DockerProcess
 {
+    public static bool IsRequiredForAcceptance() =>
+        string.Equals(
+            Environment.GetEnvironmentVariable("MTPLAYER_REQUIRE_DOCKER_TESTS"),
+            "1",
+            StringComparison.Ordinal);
+
     public static bool IsAvailable()
     {
         try
