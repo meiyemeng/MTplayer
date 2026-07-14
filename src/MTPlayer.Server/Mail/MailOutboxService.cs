@@ -91,6 +91,18 @@ public sealed class MailOutboxService(
         var staleBefore = now.Subtract(ClaimLease);
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        _ = await db.MailOutbox
+            .Where(message =>
+                message.Status == "processing" &&
+                message.AttemptCount >= MaximumAttempts &&
+                message.ClaimedAtUtc < staleBefore)
+            .ExecuteUpdateAsync(update => update
+                .SetProperty(message => message.Status, "failed")
+                .SetProperty(message => message.ClaimedAtUtc, (DateTimeOffset?)null)
+                .SetProperty(message => message.ClaimToken, (Guid?)null)
+                .SetProperty(
+                    message => message.LastError,
+                    "领取租约过期且已达到最大尝试次数。"), cancellationToken);
         var rows = await db.MailOutbox
             .FromSqlInterpolated($$"""
                 SELECT * FROM mail_outbox

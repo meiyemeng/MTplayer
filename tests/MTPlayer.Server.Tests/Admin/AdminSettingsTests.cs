@@ -23,6 +23,9 @@ public sealed class AdminSettingsTests(PostgreSqlAuthFixture fixture) : IClassFi
             builder.UseSetting("ADMIN_SETUP_TOKEN", setupToken));
         using var client = factory.CreateClient(new() { AllowAutoRedirect = false });
 
+        var initialAdminRoot = await client.GetAsync("/admin");
+        AssertRedirectWithoutCaching(initialAdminRoot, "/admin/setup");
+
         var created = await client.PostAsJsonAsync("/admin/setup", new
         {
             token = setupToken,
@@ -30,6 +33,7 @@ public sealed class AdminSettingsTests(PostgreSqlAuthFixture fixture) : IClassFi
             password = "Owner-Password-2026",
         });
         Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        AssertRedirectWithoutCaching(await client.GetAsync("/admin"), "/admin/login");
 
         var retry = await client.PostAsJsonAsync("/admin/setup", new
         {
@@ -70,6 +74,7 @@ public sealed class AdminSettingsTests(PostgreSqlAuthFixture fixture) : IClassFi
             Assert.Contains("secure", adminCookie, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("httponly", adminCookie, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("samesite=strict", adminCookie, StringComparison.OrdinalIgnoreCase);
+            AssertRedirectWithoutCaching(await browser.GetAsync("/admin"), "/admin/settings");
             var settingsPage = await browser.GetAsync("/admin/settings");
             Assert.Equal(HttpStatusCode.OK, settingsPage.StatusCode);
             Assert.Equal(HttpStatusCode.BadRequest, (await browser.PostAsync("/admin/logout", new FormUrlEncodedContent([]))).StatusCode);
@@ -183,5 +188,12 @@ public sealed class AdminSettingsTests(PostgreSqlAuthFixture fixture) : IClassFi
             RegexOptions.CultureInvariant);
         Assert.True(match.Success, html);
         return WebUtility.HtmlDecode(match.Groups[1].Value);
+    }
+
+    private static void AssertRedirectWithoutCaching(HttpResponseMessage response, string location)
+    {
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Equal(location, response.Headers.Location?.OriginalString);
+        Assert.True(response.Headers.CacheControl?.NoStore);
     }
 }

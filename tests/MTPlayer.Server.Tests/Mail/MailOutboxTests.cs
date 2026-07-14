@@ -16,14 +16,13 @@ public sealed class MailOutboxTests(PostgreSqlAuthFixture fixture) : IClassFixtu
     {
         await using var scope = fixture.Factory.Services.CreateAsyncScope();
         var outbox = scope.ServiceProvider.GetRequiredService<MailOutboxService>();
-        var ids = new List<long>();
         for (var index = 0; index < 12; index++)
         {
-            ids.Add(await outbox.EnqueueAsync(
+            _ = await outbox.EnqueueAsync(
                 $"recipient-{index}@example.com",
                 "测试",
                 "enc:v1:test-payload",
-                CancellationToken.None));
+                CancellationToken.None);
         }
 
         await using var firstScope = fixture.Factory.Services.CreateAsyncScope();
@@ -37,20 +36,28 @@ public sealed class MailOutboxTests(PostgreSqlAuthFixture fixture) : IClassFixtu
         Assert.Equal(12, claimed.Length);
         Assert.Equal(12, claimed.Select(message => message.Id).Distinct().Count());
 
+        var ordinaryStale = claimed[1];
+        await using (var db = fixture.CreateDbContext())
+        {
+            await db.MailOutbox.Where(message => message.Id == ordinaryStale.Id)
+                .ExecuteUpdateAsync(update => update.SetProperty(
+                    message => message.ClaimedAtUtc,
+                    DateTimeOffset.UtcNow.AddMinutes(-11)));
+        }
+
+        var reclaimedOrdinary = Assert.Single(await outbox.ClaimBatchAsync(1, CancellationToken.None));
+        Assert.Equal(ordinaryStale.Id, reclaimedOrdinary.Id);
+        Assert.Equal(2, reclaimedOrdinary.AttemptCount);
+        Assert.NotEqual(ordinaryStale.ClaimToken, reclaimedOrdinary.ClaimToken);
+
         var retry = claimed[0];
         var expectedDelays = new[] { 1, 5, 15, 60, 360, 360, 360 };
-        for (var attempt = 1; attempt <= 8; attempt++)
+        for (var attempt = 1; attempt < 8; attempt++)
         {
             var failedAt = DateTimeOffset.UtcNow;
             await outbox.MarkFailedAsync(retry.Id, retry.ClaimToken, "smtp failed", CancellationToken.None);
             await using var db = fixture.CreateDbContext();
             var row = await db.MailOutbox.AsNoTracking().SingleAsync(message => message.Id == retry.Id);
-            if (attempt == 8)
-            {
-                Assert.Equal("failed", row.Status);
-                break;
-            }
-
             Assert.InRange(
                 row.NextAttemptAtUtc,
                 failedAt.AddMinutes(expectedDelays[attempt - 1]),
@@ -61,10 +68,33 @@ public sealed class MailOutboxTests(PostgreSqlAuthFixture fixture) : IClassFixtu
             retry = (await outbox.ClaimBatchAsync(1, CancellationToken.None)).Single();
         }
 
-        await using var restartedFactory = fixture.CreateFactory(useHighRateLimits: true);
+        Assert.Equal(8, retry.AttemptCount);
+        await using (var crashedDb = fixture.CreateDbContext())
+        {
+            await crashedDb.MailOutbox.Where(message => message.Id == retry.Id)
+                .ExecuteUpdateAsync(update => update.SetProperty(
+                    message => message.ClaimedAtUtc,
+                    DateTimeOffset.UtcNow.AddMinutes(-11)));
+        }
+
+        var persistedId = await outbox.EnqueueAsync(
+            "restart@example.com",
+            "重启后领取",
+            "enc:v1:restart-payload",
+            CancellationToken.None);
+        await using var restartedFactory = fixture.Factory.WithWebHostBuilder(builder =>
+            builder.UseSetting("Mail:WorkerEnabled", "false"));
         await using var restartScope = restartedFactory.Services.CreateAsyncScope();
+        var restartedOutbox = restartScope.ServiceProvider.GetRequiredService<MailOutboxService>();
+        var restartedClaims = await restartedOutbox.ClaimBatchAsync(10, CancellationToken.None);
+        Assert.Contains(restartedClaims, message => message.Id == persistedId);
+        Assert.DoesNotContain(restartedClaims, message => message.Id == retry.Id);
         var restartedDb = restartScope.ServiceProvider.GetRequiredService<ApiDbContext>();
-        Assert.True(await restartedDb.MailOutbox.AnyAsync(message => ids.Contains(message.Id)));
+        var terminal = await restartedDb.MailOutbox.AsNoTracking().SingleAsync(message => message.Id == retry.Id);
+        Assert.Equal("failed", terminal.Status);
+        Assert.Null(terminal.ClaimToken);
+        Assert.Null(terminal.ClaimedAtUtc);
+        Assert.Equal("领取租约过期且已达到最大尝试次数。", terminal.LastError);
     }
 
     [Fact]

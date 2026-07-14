@@ -29,12 +29,14 @@ public sealed class AdminSetupService(
     private readonly string _configuredToken = configuration["ADMIN_SETUP_TOKEN"] ?? string.Empty;
 
     public async Task<bool> IsAvailableAsync(CancellationToken cancellationToken)
+        => !await IsCompletedAsync(cancellationToken) && !string.IsNullOrEmpty(_configuredToken);
+
+    public async Task<bool> IsCompletedAsync(CancellationToken cancellationToken)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var completed = await db.SystemSettings.AsNoTracking().AnyAsync(
+        return await db.SystemSettings.AsNoTracking().AnyAsync(
             setting => setting.Key == CompletedSettingKey && setting.Value == "true",
             cancellationToken);
-        return !completed && !string.IsNullOrEmpty(_configuredToken);
     }
 
     public async Task<AdminSetupResult> CreateAsync(
