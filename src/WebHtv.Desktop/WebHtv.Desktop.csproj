@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>MTPlayer</AssemblyName>
+    <Product>MT播放器</Product>
+    <Title>MT播放器</Title>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Platforms>x86;x64</Platforms>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\mtplayer.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets\logo-header.png" />
+    <Resource Include="Assets\logo-header-transparent.png" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4078.44" />
+    <ProjectReference Include="..\WebHtv.Core\WebHtv.Core.csproj" />
+    <ProjectReference Include="..\WebHtv.Configuration\WebHtv.Configuration.csproj" />
+    <ProjectReference Include="..\WebHtv.Catalogue\WebHtv.Catalogue.csproj" />
+    <ProjectReference Include="..\WebHtv.Spider\WebHtv.Spider.csproj" />
+    <ProjectReference Include="..\WebHtv.Playback\WebHtv.Playback.csproj" />
+  </ItemGroup>
+</Project>

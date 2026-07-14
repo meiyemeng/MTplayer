@@ -1,0 +1,36 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+artifacts/
+
+# IDE and user-specific files
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Local application state and test data
+local/
+test-results/
+*.db
+*.db-shm
+*.db-wal
+
+# Publish and installer outputs
+publish/
+installer/out/
+
+# Local brainstorming and agent state
+.superpowers/
+
+# Deployment and signing secrets
+.env
+.env.*
+!.env.example
+*.p12
+*.jks
+keystore.properties
+volumes/

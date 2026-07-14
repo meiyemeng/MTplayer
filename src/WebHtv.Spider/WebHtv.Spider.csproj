@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net8.0</TargetFramework><Platforms>x86;x64</Platforms></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\WebHtv.Core\WebHtv.Core.csproj" />
+    <ProjectReference Include="..\WebHtv.Catalogue\WebHtv.Catalogue.csproj" />
+    <PackageReference Include="Jint" Version="4.9.2" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\WebHtv.Core\WebHtv.Core.csproj" />
+    <ProjectReference Include="..\..\src\WebHtv.Configuration\WebHtv.Configuration.csproj" />
+    <ProjectReference Include="..\..\src\WebHtv.Catalogue\WebHtv.Catalogue.csproj" />
+    <ProjectReference Include="..\..\src\WebHtv.Spider\WebHtv.Spider.csproj" />
+    <ProjectReference Include="..\..\src\WebHtv.Playback\WebHtv.Playback.csproj" />
+  </ItemGroup>
+</Project>
