@@ -22,6 +22,7 @@ public sealed class ApiDbContext(DbContextOptions<ApiDbContext> options) : DbCon
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.HasSequence<long>("change_cursor_seq");
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApiDbContext).Assembly);
     }
 }

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using MTPlayer.Server.Data;
@@ -48,14 +49,67 @@ public sealed class ApiDbContextTests
     }
 
     [Fact]
+    public void Sync_record_version_is_a_concurrency_token()
+    {
+        using var db = TestDb.CreateContext();
+        var property = db.Model
+            .FindEntityType(typeof(SyncRecordEntity))!
+            .FindProperty(nameof(SyncRecordEntity.Version))!;
+
+        Assert.True(property.IsConcurrencyToken);
+    }
+
+    [Fact]
+    public void Change_cursor_is_generated_from_the_global_database_sequence()
+    {
+        using var db = TestDb.CreateContext();
+        var property = db.Model
+            .FindEntityType(typeof(ChangeLogEntity))!
+            .FindProperty(nameof(ChangeLogEntity.Cursor))!;
+
+        Assert.NotNull(db.Model.FindSequence("change_cursor_seq"));
+        Assert.Equal(ValueGenerated.OnAdd, property.ValueGenerated);
+        Assert.Equal("nextval('\"change_cursor_seq\"')", property.GetDefaultValueSql());
+    }
+
+    [Fact]
     public void Operational_lookup_columns_are_indexed()
     {
         using var db = TestDb.CreateContext();
 
         AssertIndex(db, typeof(DeviceSessionEntity), nameof(DeviceSessionEntity.RefreshTokenHash));
         AssertIndex(db, typeof(ChangeLogEntity), nameof(ChangeLogEntity.UserId), nameof(ChangeLogEntity.Cursor));
-        AssertIndex(db, typeof(MailOutboxEntity), nameof(MailOutboxEntity.Status));
+        AssertIndex(
+            db,
+            typeof(MailOutboxEntity),
+            nameof(MailOutboxEntity.Status),
+            nameof(MailOutboxEntity.NextAttemptAtUtc));
+        AssertNoIndex(db, typeof(MailOutboxEntity), nameof(MailOutboxEntity.Status));
         AssertIndex(db, typeof(EmailTokenEntity), nameof(EmailTokenEntity.ExpiresAtUtc));
+    }
+
+    [Fact]
+    public void Server_generated_timestamps_default_to_current_timestamp()
+    {
+        using var db = TestDb.CreateContext();
+
+        AssertCurrentTimestampDefault(db, typeof(UserEntity), nameof(UserEntity.CreatedAtUtc));
+        AssertCurrentTimestampDefault(db, typeof(DeviceSessionEntity), nameof(DeviceSessionEntity.CreatedAtUtc));
+        AssertCurrentTimestampDefault(db, typeof(DeviceSessionEntity), nameof(DeviceSessionEntity.LastActivityAtUtc));
+        AssertCurrentTimestampDefault(db, typeof(EmailTokenEntity), nameof(EmailTokenEntity.CreatedAtUtc));
+        AssertCurrentTimestampDefault(db, typeof(MailOutboxEntity), nameof(MailOutboxEntity.CreatedAtUtc));
+        AssertCurrentTimestampDefault(db, typeof(MailOutboxEntity), nameof(MailOutboxEntity.NextAttemptAtUtc));
+        AssertCurrentTimestampDefault(db, typeof(SystemSettingEntity), nameof(SystemSettingEntity.UpdatedAtUtc));
+        AssertCurrentTimestampDefault(db, typeof(AuditLogEntity), nameof(AuditLogEntity.CreatedAtUtc));
+
+        Assert.Null(db.Model
+            .FindEntityType(typeof(SyncRecordEntity))!
+            .FindProperty(nameof(SyncRecordEntity.ModifiedAtUtc))!
+            .GetDefaultValueSql());
+        Assert.Null(db.Model
+            .FindEntityType(typeof(ChangeLogEntity))!
+            .FindProperty(nameof(ChangeLogEntity.ModifiedAtUtc))!
+            .GetDefaultValueSql());
     }
 
     [Fact]
@@ -90,6 +144,30 @@ public sealed class ApiDbContextTests
             operation => operation.Table == "users" &&
                 operation.IsUnique &&
                 operation.Columns.SequenceEqual([nameof(UserEntity.NormalizedEmail)]));
+
+        var sequence = Assert.Single(migration.UpOperations.OfType<CreateSequenceOperation>());
+        Assert.Equal("change_cursor_seq", sequence.Name);
+
+        var tableOperations = migration.UpOperations.OfType<CreateTableOperation>().ToArray();
+        Assert.Equal(
+            "nextval('\"change_cursor_seq\"')",
+            FindColumn(tableOperations, "change_log", nameof(ChangeLogEntity.Cursor)).DefaultValueSql);
+        Assert.Equal(
+            "CURRENT_TIMESTAMP",
+            FindColumn(tableOperations, "users", nameof(UserEntity.CreatedAtUtc)).DefaultValueSql);
+        Assert.Equal(
+            "CURRENT_TIMESTAMP",
+            FindColumn(tableOperations, "system_settings", nameof(SystemSettingEntity.UpdatedAtUtc)).DefaultValueSql);
+
+        var outboxIndexes = migration.UpOperations
+            .OfType<CreateIndexOperation>()
+            .Where(operation => operation.Table == "mail_outbox")
+            .ToArray();
+        Assert.Contains(outboxIndexes, operation =>
+            operation.Columns.SequenceEqual(
+                [nameof(MailOutboxEntity.Status), nameof(MailOutboxEntity.NextAttemptAtUtc)]));
+        Assert.DoesNotContain(outboxIndexes, operation =>
+            operation.Columns.SequenceEqual([nameof(MailOutboxEntity.Status)]));
     }
 
     private static void AssertIndex(ApiDbContext db, Type entityType, params string[] propertyNames)
@@ -98,6 +176,26 @@ public sealed class ApiDbContextTests
         Assert.Contains(entity.GetIndexes(), index =>
             index.Properties.Select(property => property.Name).SequenceEqual(propertyNames));
     }
+
+    private static void AssertNoIndex(ApiDbContext db, Type entityType, params string[] propertyNames)
+    {
+        var entity = db.Model.FindEntityType(entityType)!;
+        Assert.DoesNotContain(entity.GetIndexes(), index =>
+            index.Properties.Select(property => property.Name).SequenceEqual(propertyNames));
+    }
+
+    private static void AssertCurrentTimestampDefault(ApiDbContext db, Type entityType, string propertyName)
+    {
+        var property = db.Model.FindEntityType(entityType)!.FindProperty(propertyName)!;
+        Assert.Equal("CURRENT_TIMESTAMP", property.GetDefaultValueSql());
+    }
+
+    private static AddColumnOperation FindColumn(
+        IEnumerable<CreateTableOperation> tables,
+        string tableName,
+        string columnName) =>
+        tables.Single(table => table.Name == tableName)
+            .Columns.Single(column => column.Name == columnName);
 
     private static class TestDb
     {

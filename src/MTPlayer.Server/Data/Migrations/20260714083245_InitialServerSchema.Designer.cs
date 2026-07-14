@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace MTPlayer.Server.Data.Migrations
 {
     [DbContext(typeof(ApiDbContext))]
-    [Migration("20260714080852_InitialServerSchema")]
+    [Migration("20260714083245_InitialServerSchema")]
     partial class InitialServerSchema
     {
         /// <inheritdoc />
@@ -24,6 +24,8 @@ namespace MTPlayer.Server.Data.Migrations
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.HasSequence("change_cursor_seq");
 
             modelBuilder.Entity("MTPlayer.Server.Data.AuditLogEntity", b =>
                 {
@@ -39,7 +41,9 @@ namespace MTPlayer.Server.Data.Migrations
                         .HasColumnType("character varying(200)");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<string>("DetailsJson")
                         .HasColumnType("jsonb");
@@ -69,7 +73,9 @@ namespace MTPlayer.Server.Data.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
                     b.Property<long>("Cursor")
-                        .HasColumnType("bigint");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValueSql("nextval('\"change_cursor_seq\"')");
 
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
@@ -110,7 +116,9 @@ namespace MTPlayer.Server.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<string>("DeviceName")
                         .IsRequired()
@@ -118,7 +126,9 @@ namespace MTPlayer.Server.Data.Migrations
                         .HasColumnType("character varying(200)");
 
                     b.Property<DateTimeOffset>("LastActivityAtUtc")
-                        .HasColumnType("timestamp with time zone");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<long>("LastSyncCursor")
                         .HasColumnType("bigint");
@@ -156,7 +166,9 @@ namespace MTPlayer.Server.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<DateTimeOffset>("ExpiresAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -205,13 +217,17 @@ namespace MTPlayer.Server.Data.Migrations
                         .HasColumnType("text");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<string>("LastError")
                         .HasColumnType("text");
 
                     b.Property<DateTimeOffset>("NextAttemptAtUtc")
-                        .HasColumnType("timestamp with time zone");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<string>("RecipientEmail")
                         .IsRequired()
@@ -234,8 +250,6 @@ namespace MTPlayer.Server.Data.Migrations
                         .HasColumnType("character varying(500)");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("Status");
 
                     b.HasIndex("Status", "NextAttemptAtUtc");
 
@@ -265,6 +279,7 @@ namespace MTPlayer.Server.Data.Migrations
                         .HasColumnType("jsonb");
 
                     b.Property<long>("Version")
+                        .IsConcurrencyToken()
                         .HasColumnType("bigint");
 
                     b.HasKey("UserId", "Id", "Kind");
@@ -282,7 +297,9 @@ namespace MTPlayer.Server.Data.Migrations
                         .HasColumnType("boolean");
 
                     b.Property<DateTimeOffset>("UpdatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<string>("Value")
                         .HasColumnType("text");
@@ -299,7 +316,9 @@ namespace MTPlayer.Server.Data.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<bool>("Disabled")
                         .HasColumnType("boolean");

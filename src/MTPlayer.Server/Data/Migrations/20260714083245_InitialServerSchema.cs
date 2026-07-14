@@ -16,6 +16,9 @@ namespace MTPlayer.Server.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.CreateSequence(
+                name: "change_cursor_seq");
+
             migrationBuilder.CreateTable(
                 name: "mail_outbox",
                 columns: table => new
@@ -27,8 +30,8 @@ namespace MTPlayer.Server.Data.Migrations
                     BodyHtml = table.Column<string>(type: "text", nullable: false),
                     Status = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: false, defaultValue: "pending"),
                     AttemptCount = table.Column<int>(type: "integer", nullable: false),
-                    CreatedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
-                    NextAttemptAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    CreatedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
+                    NextAttemptAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
                     SentAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
                     LastError = table.Column<string>(type: "text", nullable: true)
                 },
@@ -44,7 +47,7 @@ namespace MTPlayer.Server.Data.Migrations
                     Key = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
                     Value = table.Column<string>(type: "text", nullable: true),
                     IsEncrypted = table.Column<bool>(type: "boolean", nullable: false),
-                    UpdatedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
+                    UpdatedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP")
                 },
                 constraints: table =>
                 {
@@ -62,7 +65,7 @@ namespace MTPlayer.Server.Data.Migrations
                     EmailVerified = table.Column<bool>(type: "boolean", nullable: false),
                     Disabled = table.Column<bool>(type: "boolean", nullable: false),
                     Role = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: false, defaultValue: "user"),
-                    CreatedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
+                    CreatedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP")
                 },
                 constraints: table =>
                 {
@@ -79,7 +82,7 @@ namespace MTPlayer.Server.Data.Migrations
                     Action = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
                     Target = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
                     DetailsJson = table.Column<string>(type: "jsonb", nullable: true),
-                    CreatedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
+                    CreatedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP")
                 },
                 constraints: table =>
                 {
@@ -99,7 +102,7 @@ namespace MTPlayer.Server.Data.Migrations
                     Id = table.Column<long>(type: "bigint", nullable: false)
                         .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
                     UserId = table.Column<Guid>(type: "uuid", nullable: false),
-                    Cursor = table.Column<long>(type: "bigint", nullable: false),
+                    Cursor = table.Column<long>(type: "bigint", nullable: false, defaultValueSql: "nextval('\"change_cursor_seq\"')"),
                     RecordId = table.Column<Guid>(type: "uuid", nullable: false),
                     Kind = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: false),
                     Version = table.Column<long>(type: "bigint", nullable: false),
@@ -128,8 +131,8 @@ namespace MTPlayer.Server.Data.Migrations
                     Platform = table.Column<string>(type: "character varying(50)", maxLength: 50, nullable: false),
                     RefreshTokenHash = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
                     LastSyncCursor = table.Column<long>(type: "bigint", nullable: false),
-                    CreatedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
-                    LastActivityAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    CreatedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
+                    LastActivityAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
                     RevokedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true)
                 },
                 constraints: table =>
@@ -152,7 +155,7 @@ namespace MTPlayer.Server.Data.Migrations
                     TokenHash = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
                     Purpose = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: false),
                     ExpiresAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
-                    CreatedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    CreatedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "CURRENT_TIMESTAMP"),
                     UsedAtUtc = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true)
                 },
                 constraints: table =>
@@ -233,11 +236,6 @@ namespace MTPlayer.Server.Data.Migrations
                 column: "UserId");
 
             migrationBuilder.CreateIndex(
-                name: "IX_mail_outbox_Status",
-                table: "mail_outbox",
-                column: "Status");
-
-            migrationBuilder.CreateIndex(
                 name: "IX_mail_outbox_Status_NextAttemptAtUtc",
                 table: "mail_outbox",
                 columns: MailOutboxClaimColumns);
@@ -275,6 +273,9 @@ namespace MTPlayer.Server.Data.Migrations
 
             migrationBuilder.DropTable(
                 name: "users");
+
+            migrationBuilder.DropSequence(
+                name: "change_cursor_seq");
         }
     }
 }

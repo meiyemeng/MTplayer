@@ -13,6 +13,7 @@ internal sealed class UserEntityConfiguration : IEntityTypeConfiguration<UserEnt
         builder.Property(user => user.NormalizedEmail).HasMaxLength(320);
         builder.Property(user => user.PasswordHash).HasMaxLength(512);
         builder.Property(user => user.Role).HasMaxLength(32).HasDefaultValue("user");
+        builder.Property(user => user.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
         builder.HasIndex(user => user.NormalizedEmail).IsUnique();
     }
 }
@@ -26,6 +27,8 @@ internal sealed class DeviceSessionEntityConfiguration : IEntityTypeConfiguratio
         builder.Property(session => session.DeviceName).HasMaxLength(200);
         builder.Property(session => session.Platform).HasMaxLength(50);
         builder.Property(session => session.RefreshTokenHash).HasMaxLength(64);
+        builder.Property(session => session.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
+        builder.Property(session => session.LastActivityAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
         builder.HasIndex(session => session.RefreshTokenHash).IsUnique();
         builder.HasIndex(session => new { session.UserId, session.RevokedAtUtc });
         builder.HasOne(session => session.User)
@@ -42,6 +45,7 @@ internal sealed class SyncRecordEntityConfiguration : IEntityTypeConfiguration<S
         builder.ToTable("sync_records");
         builder.HasKey(record => new { record.UserId, record.Id, record.Kind });
         builder.Property(record => record.Kind).HasConversion<string>().HasMaxLength(32);
+        builder.Property(record => record.Version).IsConcurrencyToken();
         builder.Property(record => record.PayloadJson).HasColumnType("jsonb");
         builder.HasOne(record => record.User)
             .WithMany()
@@ -56,6 +60,9 @@ internal sealed class ChangeLogEntityConfiguration : IEntityTypeConfiguration<Ch
     {
         builder.ToTable("change_log");
         builder.HasKey(change => change.Id);
+        builder.Property(change => change.Cursor)
+            .ValueGeneratedOnAdd()
+            .HasDefaultValueSql("nextval('\"change_cursor_seq\"')");
         builder.Property(change => change.Kind).HasConversion<string>().HasMaxLength(32);
         builder.Property(change => change.PayloadJson).HasColumnType("jsonb");
         builder.HasIndex(change => new { change.UserId, change.Cursor }).IsUnique();
@@ -74,6 +81,7 @@ internal sealed class EmailTokenEntityConfiguration : IEntityTypeConfiguration<E
         builder.HasKey(token => token.Id);
         builder.Property(token => token.TokenHash).HasMaxLength(64);
         builder.Property(token => token.Purpose).HasMaxLength(32);
+        builder.Property(token => token.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
         builder.HasIndex(token => token.TokenHash).IsUnique();
         builder.HasIndex(token => token.ExpiresAtUtc);
         builder.HasOne(token => token.User)
@@ -92,7 +100,8 @@ internal sealed class MailOutboxEntityConfiguration : IEntityTypeConfiguration<M
         builder.Property(message => message.RecipientEmail).HasMaxLength(320);
         builder.Property(message => message.Subject).HasMaxLength(500);
         builder.Property(message => message.Status).HasMaxLength(32).HasDefaultValue("pending");
-        builder.HasIndex(message => message.Status);
+        builder.Property(message => message.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
+        builder.Property(message => message.NextAttemptAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
         builder.HasIndex(message => new { message.Status, message.NextAttemptAtUtc });
     }
 }
@@ -104,6 +113,7 @@ internal sealed class SystemSettingEntityConfiguration : IEntityTypeConfiguratio
         builder.ToTable("system_settings");
         builder.HasKey(setting => setting.Key);
         builder.Property(setting => setting.Key).HasMaxLength(200);
+        builder.Property(setting => setting.UpdatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
     }
 }
 
@@ -116,6 +126,7 @@ internal sealed class AuditLogEntityConfiguration : IEntityTypeConfiguration<Aud
         builder.Property(audit => audit.Action).HasMaxLength(200);
         builder.Property(audit => audit.Target).HasMaxLength(500);
         builder.Property(audit => audit.DetailsJson).HasColumnType("jsonb");
+        builder.Property(audit => audit.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
         builder.HasIndex(audit => audit.CreatedAtUtc);
         builder.HasOne(audit => audit.User)
             .WithMany()
