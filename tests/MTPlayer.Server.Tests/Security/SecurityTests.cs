@@ -163,6 +163,20 @@ public sealed class SecurityTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Data_encryption_key_error_takes_priority_when_both_required_settings_are_missing()
+    {
+        using var factory = CreateFactory(string.Empty, string.Empty);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => factory.CreateClient());
+
+        Assert.Contains(
+            "DATA_ENCRYPTION_KEY must be a Base64 encoded 32-byte key",
+            exception.Message,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(PostgreSqlConfigurationKey, exception.Message, StringComparison.Ordinal);
+    }
+
     private static WebApplicationFactory<Program> CreateFactory(
         string connectionString,
         string dataEncryptionKey) =>

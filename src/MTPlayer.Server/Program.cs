@@ -5,13 +5,6 @@ using MTPlayer.Server.Security;
 var builder = WebApplication.CreateBuilder(args);
 const string postgreSqlConnectionStringKey = "ConnectionStrings:PostgreSQL";
 const string dataEncryptionKeyConfigurationKey = "DATA_ENCRYPTION_KEY";
-var postgreSqlConnectionString = builder.Configuration[postgreSqlConnectionStringKey];
-if (string.IsNullOrWhiteSpace(postgreSqlConnectionString))
-{
-    throw new InvalidOperationException(
-        $"Configuration value '{postgreSqlConnectionStringKey}' is required and cannot be empty.");
-}
-
 ISecretProtector secretProtector;
 try
 {
@@ -23,6 +16,13 @@ catch (ArgumentException exception)
     throw new InvalidOperationException(
         "DATA_ENCRYPTION_KEY must be a Base64 encoded 32-byte key.",
         exception);
+}
+
+var postgreSqlConnectionString = builder.Configuration[postgreSqlConnectionStringKey];
+if (string.IsNullOrWhiteSpace(postgreSqlConnectionString))
+{
+    throw new InvalidOperationException(
+        $"Configuration value '{postgreSqlConnectionStringKey}' is required and cannot be empty.");
 }
 
 builder.Services.AddDbContext<ApiDbContext>(options =>
