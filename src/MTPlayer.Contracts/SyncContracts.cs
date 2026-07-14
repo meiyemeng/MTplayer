@@ -1,14 +1,16 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace MTPlayer.Contracts;
 
+[JsonConverter(typeof(JsonStringEnumConverter<SyncEntityKind>))]
 public enum SyncEntityKind
 {
-    ConfigurationGroup,
-    Favorite,
-    PlaybackHistory,
-    SkipMarker,
-    Preference,
+    ConfigurationGroup = 0,
+    Favorite = 1,
+    PlaybackHistory = 2,
+    SkipMarker = 3,
+    Preference = 4,
 }
 
 public sealed record SyncMutation(
