@@ -389,6 +389,16 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
             "/api/v1/auth/forgot-password",
             new { email = "missing-6@example.com" });
         Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
+        Assert.Equal("application/problem+json", rejected.Content.Headers.ContentType?.MediaType);
+        var problem = await rejected.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(StatusCodes.Status429TooManyRequests, problem.GetProperty("status").GetInt32());
+        Assert.Equal("请求过于频繁，请稍后再试。", problem.GetProperty("title").GetString());
+        Assert.Equal("rate_limit_exceeded", problem.GetProperty("code").GetString());
+        var traceId = problem.GetProperty("traceId").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(traceId));
+        Assert.Equal(traceId, Assert.Single(rejected.Headers.GetValues("X-Request-ID")));
+        Assert.NotNull(rejected.Headers.RetryAfter?.Delta);
+        Assert.InRange(rejected.Headers.RetryAfter!.Delta!.Value, TimeSpan.FromSeconds(1), TimeSpan.FromMinutes(10));
     }
 
     [DockerFact]

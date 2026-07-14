@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -72,6 +73,33 @@ builder.Services.AddProblemDetails();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        var httpContext = context.HttpContext;
+        if (httpContext.Response.HasStarted)
+        {
+            return;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var traceId = httpContext.TraceIdentifier;
+        httpContext.Response.Headers["X-Request-ID"] = traceId;
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+        {
+            var retryAfterSeconds = Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds));
+            httpContext.Response.Headers.RetryAfter = retryAfterSeconds.ToString(CultureInfo.InvariantCulture);
+        }
+
+        await Results.Problem(
+                statusCode: StatusCodes.Status429TooManyRequests,
+                title: "请求过于频繁，请稍后再试。",
+                extensions: new Dictionary<string, object?>
+                {
+                    ["code"] = "rate_limit_exceeded",
+                    ["traceId"] = traceId,
+                })
+            .ExecuteAsync(httpContext);
+    };
     AddFixedWindowPolicy(options, builder.Configuration, "registration", 5, TimeSpan.FromMinutes(10));
     AddFixedWindowPolicy(options, builder.Configuration, "login", 10, TimeSpan.FromMinutes(1));
     AddFixedWindowPolicy(options, builder.Configuration, "refresh", 30, TimeSpan.FromMinutes(1));
