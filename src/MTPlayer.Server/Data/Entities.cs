@@ -137,6 +137,10 @@ public sealed class MailOutboxEntity
 
     public DateTimeOffset NextAttemptAtUtc { get; set; }
 
+    public Guid? ClaimToken { get; set; }
+
+    public DateTimeOffset? ClaimedAtUtc { get; set; }
+
     public DateTimeOffset? SentAtUtc { get; set; }
 
     public string? LastError { get; set; }

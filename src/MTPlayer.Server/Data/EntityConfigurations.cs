@@ -116,6 +116,7 @@ internal sealed class MailOutboxEntityConfiguration : IEntityTypeConfiguration<M
         builder.Property(message => message.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
         builder.Property(message => message.NextAttemptAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
         builder.HasIndex(message => new { message.Status, message.NextAttemptAtUtc });
+        builder.HasIndex(message => new { message.Status, message.ClaimedAtUtc });
     }
 }
 

@@ -1,0 +1,33 @@
+@page "/admin/setup"
+@model MTPlayer.Server.Pages.Admin.SetupModel
+@{
+    Layout = null;
+}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>首次初始化 - MT播放器</title>
+</head>
+<body>
+<main>
+    <h1>首次初始化</h1>
+    <p>此入口只能成功使用一次。请输入部署时设置的初始化令牌并创建首位管理员。</p>
+    <form method="post">
+        @Html.AntiForgeryToken()
+        <div asp-validation-summary="ModelOnly"></div>
+        <label asp-for="Input.Token">初始化令牌</label>
+        <input asp-for="Input.Token" type="password" autocomplete="off" />
+        <span asp-validation-for="Input.Token"></span>
+        <label asp-for="Input.Email">管理员邮箱</label>
+        <input asp-for="Input.Email" type="email" autocomplete="username" />
+        <span asp-validation-for="Input.Email"></span>
+        <label asp-for="Input.Password">管理员密码</label>
+        <input asp-for="Input.Password" type="password" autocomplete="new-password" />
+        <span asp-validation-for="Input.Password"></span>
+        <button type="submit">创建管理员</button>
+    </form>
+</main>
+</body>
+</html>

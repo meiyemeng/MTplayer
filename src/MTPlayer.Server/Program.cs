@@ -1,13 +1,17 @@
 using System.Globalization;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using MTPlayer.Server.Auth;
+using MTPlayer.Server.Admin;
 using MTPlayer.Server.Data;
+using MTPlayer.Server.Mail;
 using MTPlayer.Server.Security;
+using MTPlayer.Server.Settings;
 
 var builder = WebApplication.CreateBuilder(args);
 const string postgreSqlConnectionStringKey = "ConnectionStrings:PostgreSQL";
@@ -31,7 +35,7 @@ if (string.IsNullOrWhiteSpace(postgreSqlConnectionString))
         $"Configuration value '{postgreSqlConnectionStringKey}' is required and cannot be empty.");
 }
 
-builder.Services.AddDbContext<ApiDbContext>(options =>
+builder.Services.AddDbContextFactory<ApiDbContext>(options =>
     options.UseNpgsql(postgreSqlConnectionString));
 builder.Services.AddSingleton<ISecretProtector>(
     _ => new AesGcmSecretProtector(dataEncryptionKey));
@@ -41,7 +45,18 @@ builder.Services.AddSingleton(_ => JwtOptions.FromDataEncryptionKey(dataEncrypti
 builder.Services.AddSingleton<IConfigureOptions<JwtBearerOptions>, ConfigureJwtBearerOptions>();
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer();
+    .AddJwtBearer()
+    .AddCookie(AdminAuthentication.CookieScheme, options =>
+    {
+        options.Cookie.Name = "__Host-MTPlayerAdmin";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Strict;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+        options.Cookie.Path = "/";
+        options.ExpireTimeSpan = TimeSpan.FromHours(2);
+        options.SlidingExpiration = true;
+        options.EventsType = typeof(AdminCookieEvents);
+    });
 builder.Services.AddAuthorization(options =>
 {
     options.DefaultPolicy = new AuthorizationPolicyBuilder(JwtBearerDefaults.AuthenticationScheme)
@@ -53,10 +68,33 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser();
         policy.AddRequirements(new SyncAccessRequirement());
     });
+    options.AddPolicy(AdminAuthentication.ApiPolicy, policy =>
+    {
+        policy.AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireRole("admin");
+    });
+    options.AddPolicy(AdminAuthentication.PagePolicy, policy =>
+    {
+        policy.AddAuthenticationSchemes(AdminAuthentication.CookieScheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireRole("admin");
+    });
 });
 builder.Services.AddScoped<IAuthorizationHandler, SyncAccessHandler>();
 builder.Services.AddScoped<CurrentUser>();
 builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<AdminAuthenticationService>();
+builder.Services.AddScoped<AdminCookieEvents>();
+builder.Services.AddSingleton<AdminSetupService>();
+builder.Services.AddSingleton<SystemSettingsService>();
+builder.Services.AddSingleton<MailOutboxService>();
+builder.Services.AddScoped<MailOutboxDispatcher>();
+builder.Services.AddSingleton<ISmtpEmailSender, SmtpEmailSender>();
+if (builder.Configuration.GetValue("Mail:WorkerEnabled", true))
+{
+    builder.Services.AddHostedService<MailOutboxWorker>();
+}
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(serviceProvider => new Argon2PasswordService(
     serviceProvider.GetRequiredService<PasswordHasher>(),
@@ -68,6 +106,7 @@ builder.Services.AddSingleton(serviceProvider => new AuthTiming(
         25,
         1_000))));
 builder.Services.AddProblemDetails();
+builder.Services.AddRazorPages();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -113,6 +152,8 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapAuthEndpoints();
+app.MapAdminEndpoints();
+app.MapRazorPages();
 app.Run();
 
 static void AddFixedWindowPolicy(

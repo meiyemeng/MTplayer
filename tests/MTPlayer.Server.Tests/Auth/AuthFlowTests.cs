@@ -583,11 +583,11 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
         var endpoints = fixture.Factory.Services.GetServices<Microsoft.AspNetCore.Routing.EndpointDataSource>()
             .SelectMany(source => source.Endpoints)
             .OfType<Microsoft.AspNetCore.Routing.RouteEndpoint>()
-            .ToDictionary(endpoint => endpoint.RoutePattern.RawText!, StringComparer.Ordinal);
+            .ToLookup(endpoint => endpoint.RoutePattern.RawText!, StringComparer.Ordinal);
 
         foreach (var (route, policy) in expected)
         {
-            var metadata = endpoints[route].Metadata.GetMetadata<EnableRateLimitingAttribute>();
+            var metadata = Assert.Single(endpoints[route]).Metadata.GetMetadata<EnableRateLimitingAttribute>();
             Assert.NotNull(metadata);
             Assert.Equal(policy, metadata.PolicyName);
         }

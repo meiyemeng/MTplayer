@@ -24,6 +24,7 @@ public static class AuthEndpoints
         await auth.RegisterAsync(request, cancellationToken) switch
         {
             AuthStatus.Accepted => Accepted(context, "如果该邮箱可注册，将收到验证邮件。"),
+            AuthStatus.RegistrationClosed => Problem(context, "registration_disabled", "管理员已关闭新用户注册。", StatusCodes.Status403Forbidden),
             _ => Problem(context, "invalid_registration", "邮箱格式无效，或密码长度不在 10 到 128 个字符之间。", StatusCodes.Status400BadRequest),
         };
 

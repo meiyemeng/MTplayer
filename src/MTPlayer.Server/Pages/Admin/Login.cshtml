@@ -1,0 +1,28 @@
+@page "/admin/login"
+@model MTPlayer.Server.Pages.Admin.LoginModel
+@{
+    Layout = null;
+}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>管理员登录 - MT播放器</title>
+</head>
+<body>
+<main>
+    <h1>管理员登录</h1>
+    <form method="post">
+        <div asp-validation-summary="ModelOnly"></div>
+        <input asp-for="ReturnUrl" type="hidden" />
+        <label asp-for="Input.Email">邮箱</label>
+        <input asp-for="Input.Email" type="email" autocomplete="username" />
+        <label asp-for="Input.Password">密码</label>
+        <input asp-for="Input.Password" type="password" autocomplete="current-password" />
+        <label><input asp-for="Input.RememberMe" /> 保持登录</label>
+        <button type="submit">登录</button>
+    </form>
+</main>
+</body>
+</html>

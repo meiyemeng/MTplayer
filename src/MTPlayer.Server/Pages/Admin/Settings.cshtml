@@ -1,0 +1,80 @@
+@page "/admin/settings"
+@model MTPlayer.Server.Pages.Admin.SettingsModel
+@{
+    Layout = null;
+}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>系统设置 - MT播放器</title>
+</head>
+<body>
+<main>
+    <h1>系统设置</h1>
+    @if (!string.IsNullOrEmpty(Model.StatusMessage)) { <p role="status">@Model.StatusMessage</p> }
+    <form method="post">
+        <div asp-validation-summary="ModelOnly"></div>
+        <fieldset>
+            <legend>公开地址与 SMTP</legend>
+            <p>公开地址：@(Model.PublicBaseUrlConfigured ? "已配置" : "未配置")；SMTP 密码：@(Model.SmtpPasswordConfigured ? "已配置" : "未配置")</p>
+            <label asp-for="Input.PublicBaseUrl">新的公开 HTTPS 地址</label>
+            <input asp-for="Input.PublicBaseUrl" placeholder="请填写实际 HTTPS 地址" autocomplete="off" />
+            <label><input asp-for="Input.ClearPublicBaseUrl" /> 清除已配置公开地址</label>
+            <label asp-for="Input.SmtpHost">SMTP 主机</label><input asp-for="Input.SmtpHost" />
+            <label asp-for="Input.SmtpPort">SMTP 端口</label><input asp-for="Input.SmtpPort" />
+            <label asp-for="Input.SmtpUsername">SMTP 用户名</label><input asp-for="Input.SmtpUsername" autocomplete="username" />
+            <label asp-for="Input.NewSmtpPassword">新的 SMTP 密码</label><input asp-for="Input.NewSmtpPassword" type="password" autocomplete="new-password" />
+            <label><input asp-for="Input.ClearSmtpPassword" /> 清除已配置 SMTP 密码</label>
+            <label asp-for="Input.SmtpFromName">发件人名称</label><input asp-for="Input.SmtpFromName" />
+            <label asp-for="Input.SmtpFromAddress">发件邮箱</label><input asp-for="Input.SmtpFromAddress" type="email" />
+            <label><input asp-for="Input.SmtpUseTls" /> 启用 TLS/SSL</label>
+        </fieldset>
+        <fieldset>
+            <legend>账号开关与令牌有效期</legend>
+            <label><input asp-for="Input.RegistrationEnabled" /> 开放注册</label>
+            <label><input asp-for="Input.RequireVerifiedEmail" /> 强制邮箱验证</label>
+            <label><input asp-for="Input.PasswordResetEnabled" /> 允许找回密码</label>
+            <label asp-for="Input.EmailVerificationTokenExpiryMinutes">验证邮件有效分钟</label><input asp-for="Input.EmailVerificationTokenExpiryMinutes" />
+            <label asp-for="Input.PasswordResetTokenExpiryMinutes">重置邮件有效分钟</label><input asp-for="Input.PasswordResetTokenExpiryMinutes" />
+        </fieldset>
+        <fieldset>
+            <legend>验证邮箱模板</legend>
+            <label asp-for="Input.VerificationSubjectTemplate">标题</label><input asp-for="Input.VerificationSubjectTemplate" />
+            <label asp-for="Input.VerificationBodyTemplate">HTML 正文</label><textarea asp-for="Input.VerificationBodyTemplate"></textarea>
+            <p>可用标记：{email}、{verificationUrl}、{expiresMinutes}</p>
+        </fieldset>
+        <fieldset>
+            <legend>重置密码模板</legend>
+            <label asp-for="Input.ResetSubjectTemplate">标题</label><input asp-for="Input.ResetSubjectTemplate" />
+            <label asp-for="Input.ResetBodyTemplate">HTML 正文</label><textarea asp-for="Input.ResetBodyTemplate"></textarea>
+            <p>可用标记：{email}、{resetUrl}、{expiresMinutes}</p>
+        </fieldset>
+        <fieldset>
+            <legend>测试邮件模板</legend>
+            <label asp-for="Input.TestSubjectTemplate">标题</label><input asp-for="Input.TestSubjectTemplate" />
+            <label asp-for="Input.TestBodyTemplate">HTML 正文</label><textarea asp-for="Input.TestBodyTemplate"></textarea>
+            <p>可用标记：{email}</p>
+        </fieldset>
+        <button type="submit">保存设置</button>
+    </form>
+    <form method="post" asp-page-handler="TestEmail">
+        <label asp-for="TestRecipientEmail">测试收件邮箱</label>
+        <input asp-for="TestRecipientEmail" type="email" />
+        @if (Model.MailConfigurationComplete)
+        {
+            <button type="submit">发送测试邮件</button>
+        }
+        else
+        {
+            <button type="submit" disabled>发送测试邮件</button>
+            <span>请先完整配置公开地址和 SMTP。</span>
+        }
+    </form>
+    <form method="post" action="/admin/logout">
+        <button type="submit">退出登录</button>
+    </form>
+</main>
+</body>
+</html>

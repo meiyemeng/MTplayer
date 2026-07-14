@@ -22,6 +22,7 @@ public enum AuthStatus
     InvalidToken,
     Disabled,
     VerificationRequired,
+    RegistrationClosed,
 }
 
 public sealed record AuthResult(AuthStatus Status, TokenResponse? Tokens = null);
@@ -50,6 +51,11 @@ public sealed class AuthService(
         var startedAt = timing.GetTimestamp();
         try
         {
+            if (!await ReadBoolSettingAsync("RegistrationEnabled", true, cancellationToken))
+            {
+                return AuthStatus.RegistrationClosed;
+            }
+
             if (!TryNormalizeEmail(request.Email, out var email, out var normalizedEmail) ||
                 !HasValidPasswordLength(request.Password))
             {
@@ -58,22 +64,27 @@ public sealed class AuthService(
 
             var now = timeProvider.GetUtcNow();
             var passwordHash = await passwords.HashAsync(request.Password, cancellationToken);
-            var prepared = await PrepareEmailTokenAsync(
-                VerificationPurpose,
-                VerificationExpirySetting,
-                DefaultVerificationExpiryMinutes,
-                now,
-                cancellationToken);
+            var requireVerifiedEmail = await ReadBoolSettingAsync("RequireVerifiedEmail", true, cancellationToken);
             var user = new UserEntity
             {
                 Id = Guid.NewGuid(),
                 Email = email,
                 NormalizedEmail = normalizedEmail,
                 PasswordHash = passwordHash,
+                EmailVerified = !requireVerifiedEmail,
                 CreatedAtUtc = now,
             };
             db.Users.Add(user);
-            AddPreparedEmail(user.Id, user.Email, VerificationPurpose, prepared, now);
+            if (requireVerifiedEmail)
+            {
+                var prepared = await PrepareEmailTokenAsync(
+                    VerificationPurpose,
+                    VerificationExpirySetting,
+                    DefaultVerificationExpiryMinutes,
+                    now,
+                    cancellationToken);
+                AddPreparedEmail(user.Id, user.Email, VerificationPurpose, prepared, now);
+            }
             try
             {
                 await db.SaveChangesAsync(cancellationToken);
@@ -320,6 +331,11 @@ public sealed class AuthService(
         var startedAt = timing.GetTimestamp();
         try
         {
+            if (!await ReadBoolSettingAsync("PasswordResetEnabled", true, cancellationToken))
+            {
+                return;
+            }
+
             var validEmail = TryNormalizeEmail(emailInput, out _, out var normalizedEmail);
             var now = timeProvider.GetUtcNow();
             var prepared = await PrepareEmailTokenAsync(
@@ -513,6 +529,18 @@ public sealed class AuthService(
             parsed >= minimum && parsed <= maximum
                 ? parsed
                 : safeDefault;
+    }
+
+    private async Task<bool> ReadBoolSettingAsync(
+        string key,
+        bool safeDefault,
+        CancellationToken cancellationToken)
+    {
+        var value = await db.SystemSettings.AsNoTracking()
+            .Where(setting => setting.Key == key && !setting.IsEncrypted)
+            .Select(setting => setting.Value)
+            .SingleOrDefaultAsync(cancellationToken);
+        return bool.TryParse(value, out var parsed) ? parsed : safeDefault;
     }
 
     private async Task RevokeSessionAsync(Guid sessionId, DateTimeOffset now, CancellationToken cancellationToken) =>

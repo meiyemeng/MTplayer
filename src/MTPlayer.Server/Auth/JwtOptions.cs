@@ -111,9 +111,14 @@ public sealed class ConfigureJwtBearerOptions(JwtOptions jwtOptions) : IConfigur
                     return;
                 }
 
+                var tokenRole = context.Principal?.FindFirst("role")?.Value;
                 var db = context.HttpContext.RequestServices.GetRequiredService<ApiDbContext>();
-                var active = await db.Users.AnyAsync(
-                    user => user.Id == userId && user.EmailVerified && !user.Disabled,
+                var active = tokenRole is not null && await db.Users.AnyAsync(
+                    user =>
+                        user.Id == userId &&
+                        user.EmailVerified &&
+                        !user.Disabled &&
+                        user.Role == tokenRole,
                     context.HttpContext.RequestAborted);
                 if (!active)
                 {
