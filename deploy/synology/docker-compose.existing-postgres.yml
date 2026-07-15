@@ -1,0 +1,45 @@
+name: mtplayer
+
+services:
+  mt-api:
+    image: mtplayer/server:1.0.1-amd64
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__PostgreSQL: Host=${POSTGRES_HOST};Port=5432;Database=mtplayer;Username=mtplayer;Password=${MTPLAYER_DATABASE_PASSWORD}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY}
+      ADMIN_SETUP_TOKEN: ${ADMIN_SETUP_TOKEN}
+      AllowedHosts: localhost;127.0.0.1;${ALLOWED_HOSTS:-*}
+      Database__MigrateOnStartup: "true"
+      ForwardedHeaders__ForwardLimit: "1"
+      ForwardedHeaders__KnownNetworks__0: ${FORWARDED_NETWORK:-172.16.0.0/12}
+    expose:
+      - "8080"
+    volumes:
+      - mtplayer-data-protection:/home/app/.aspnet/DataProtection-Keys
+    networks:
+      - mtplayer
+      - existing-postgres
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+
+networks:
+  mtplayer:
+    name: mtplayer
+  existing-postgres:
+    external: true
+    name: ${POSTGRES_DOCKER_NETWORK}
+
+volumes:
+  mtplayer-data-protection:
+    name: mtplayer-data-protection

@@ -1,28 +1,50 @@
 @page "/admin/login"
 @model MTPlayer.Server.Pages.Admin.LoginModel
 @{
-    Layout = null;
+    Layout = "/Pages/Shared/_AuthLayout.cshtml";
+    ViewData["Title"] = "管理员登录";
+    ViewData["Kicker"] = "SECURE ACCESS";
 }
-<!doctype html>
-<html lang="zh-CN">
-<head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>管理员登录 - MT播放器</title>
-</head>
-<body>
-<main>
-    <h1>管理员登录</h1>
-    <form method="post">
+
+<section class="auth-card" aria-labelledby="login-title">
+    <header class="auth-card-header">
+        <p class="eyebrow">WELCOME BACK</p>
+        <h2 id="login-title">管理员登录</h2>
+        <p>使用管理员邮箱进入 MT播放器控制台。</p>
+    </header>
+
+    <form class="auth-form" method="post">
         <div asp-validation-summary="ModelOnly"></div>
         <input asp-for="ReturnUrl" type="hidden" />
-        <label asp-for="Input.Email">邮箱</label>
-        <input asp-for="Input.Email" type="email" autocomplete="username" />
-        <label asp-for="Input.Password">密码</label>
-        <input asp-for="Input.Password" type="password" autocomplete="current-password" />
-        <label><input asp-for="Input.RememberMe" /> 保持登录</label>
-        <button type="submit">登录</button>
+
+        <div class="field">
+            <label asp-for="Input.Email">管理员邮箱</label>
+            <input asp-for="Input.Email" type="email" autocomplete="username" placeholder="admin@example.com" autofocus />
+            <span asp-validation-for="Input.Email"></span>
+        </div>
+
+        <div class="field">
+            <label asp-for="Input.Password">密码</label>
+            <div class="password-wrap">
+                <input asp-for="Input.Password" type="password" autocomplete="current-password" placeholder="输入管理员密码" />
+                <button class="password-toggle" type="button" data-password-toggle="Input_Password" aria-label="显示密码">显示</button>
+            </div>
+            <span asp-validation-for="Input.Password"></span>
+        </div>
+
+        <div class="auth-options">
+            <label class="check-row">
+                <input asp-for="Input.RememberMe" />
+                <span class="checkbox-ui" aria-hidden="true"></span>
+                <span class="check-copy"><strong>在此设备保持登录</strong></span>
+            </label>
+        </div>
+
+        <button class="button primary" type="submit">进入管理后台</button>
     </form>
-</main>
-</body>
-</html>
+
+    <div class="auth-security">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <span>登录会话经过加密 Cookie 保护，并在闲置后自动失效。</span>
+    </div>
+</section>

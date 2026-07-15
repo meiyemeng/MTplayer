@@ -1,33 +1,53 @@
 @page "/admin/setup"
 @model MTPlayer.Server.Pages.Admin.SetupModel
 @{
-    Layout = null;
+    Layout = "/Pages/Shared/_AuthLayout.cshtml";
+    ViewData["Title"] = "首次初始化";
+    ViewData["Kicker"] = "FIRST RUN";
 }
-<!doctype html>
-<html lang="zh-CN">
-<head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>首次初始化 - MT播放器</title>
-</head>
-<body>
-<main>
-    <h1>首次初始化</h1>
-    <p>此入口只能成功使用一次。请输入部署时设置的初始化令牌并创建首位管理员。</p>
-    <form method="post">
+
+<section class="auth-card" aria-labelledby="setup-title">
+    <div class="setup-steps" aria-label="初始化进度"><span class="active"></span><span></span></div>
+    <header class="auth-card-header">
+        <p class="eyebrow">INITIAL SETUP</p>
+        <h2 id="setup-title">创建首位管理员</h2>
+        <p>此入口只能成功使用一次。完成后，初始化令牌立即失效。</p>
+    </header>
+
+    <form class="auth-form" method="post">
         @Html.AntiForgeryToken()
         <div asp-validation-summary="ModelOnly"></div>
-        <label asp-for="Input.Token">初始化令牌</label>
-        <input asp-for="Input.Token" type="password" autocomplete="off" />
-        <span asp-validation-for="Input.Token"></span>
-        <label asp-for="Input.Email">管理员邮箱</label>
-        <input asp-for="Input.Email" type="email" autocomplete="username" />
-        <span asp-validation-for="Input.Email"></span>
-        <label asp-for="Input.Password">管理员密码</label>
-        <input asp-for="Input.Password" type="password" autocomplete="new-password" />
-        <span asp-validation-for="Input.Password"></span>
-        <button type="submit">创建管理员</button>
+
+        <div class="field">
+            <label asp-for="Input.Token">部署初始化令牌</label>
+            <div class="password-wrap">
+                <input asp-for="Input.Token" type="password" autocomplete="off" placeholder="ADMIN_SETUP_TOKEN" autofocus />
+                <button class="password-toggle" type="button" data-password-toggle="Input_Token" aria-label="显示令牌">显示</button>
+            </div>
+            <span class="field-hint">填写 Compose 中配置的 ADMIN_SETUP_TOKEN。</span>
+            <span asp-validation-for="Input.Token"></span>
+        </div>
+
+        <div class="field">
+            <label asp-for="Input.Email">管理员邮箱</label>
+            <input asp-for="Input.Email" type="email" autocomplete="username" placeholder="admin@example.com" />
+            <span asp-validation-for="Input.Email"></span>
+        </div>
+
+        <div class="field">
+            <label asp-for="Input.Password">管理员密码</label>
+            <div class="password-wrap">
+                <input asp-for="Input.Password" type="password" autocomplete="new-password" placeholder="至少 10 个字符" />
+                <button class="password-toggle" type="button" data-password-toggle="Input_Password" aria-label="显示密码">显示</button>
+            </div>
+            <span asp-validation-for="Input.Password"></span>
+        </div>
+
+        <button class="button primary" type="submit">创建管理员并继续</button>
     </form>
-</main>
-</body>
-</html>
+
+    <div class="auth-security">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>
+        <span>初始化令牌和密码只用于本次请求，不会以明文保存。</span>
+    </div>
+</section>

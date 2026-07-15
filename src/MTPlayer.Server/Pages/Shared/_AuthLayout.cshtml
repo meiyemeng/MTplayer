@@ -1,0 +1,41 @@
+@{
+    var pageTitle = ViewData["Title"] as string ?? "账号管理";
+    var pageKicker = ViewData["Kicker"] as string ?? "SECURE ACCESS";
+}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>@pageTitle - MT播放器</title>
+    <link rel="stylesheet" href="~/css/admin.css" asp-append-version="true" />
+</head>
+<body class="auth-body">
+    <div class="auth-shell">
+        <section class="auth-brand-panel">
+            <div class="auth-brand-content">
+                <a class="brand auth-brand" href="/admin" aria-label="MT播放器管理后台">
+                    <span class="brand-mark large" aria-hidden="true"><img src="~/images/mtplayer-icon.png" alt="" /></span>
+                    <span class="brand-copy"><strong>MT播放器</strong><small>CONTROL DESK</small></span>
+                </a>
+                <div class="auth-statement">
+                    <p class="eyebrow">@pageKicker</p>
+                    <h1>让播放留在前台，<br /><span>复杂留给后台。</span></h1>
+                    <p>集中管理账号、设备和同步服务。影视内容与播放流始终不经过此服务器。</p>
+                </div>
+                <div class="signal-track" aria-hidden="true"><i></i><i></i><i></i></div>
+                <div class="auth-facts">
+                    <div><strong>01</strong><span>自托管数据</span></div>
+                    <div><strong>02</strong><span>HTTPS 接入</span></div>
+                    <div><strong>03</strong><span>跨设备同步</span></div>
+                </div>
+            </div>
+        </section>
+        <main class="auth-main">
+            @RenderBody()
+        </main>
+    </div>
+    <script src="~/js/admin.js" asp-append-version="true"></script>
+</body>
+</html>

@@ -182,6 +182,7 @@ await DatabaseStartup.ApplyMigrationsAsync(app.Services, app.Configuration, app.
 app.UseForwardedHeaders();
 app.UseMiddleware<RequestIdMiddleware>();
 app.UseExceptionHandler();
+app.UseStaticFiles();
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();

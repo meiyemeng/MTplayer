@@ -1,49 +1,91 @@
 @page "/admin/users"
 @model MTPlayer.Server.Pages.Admin.UsersModel
 @{
-    Layout = null;
+    Layout = "/Pages/Shared/_AdminLayout.cshtml";
+    ViewData["Title"] = "用户管理";
+    ViewData["Description"] = "查看账号状态、验证情况与活跃设备";
+    var enabledUsers = Model.Users.Count(user => !user.Disabled);
+    var activeDevices = Model.Users.Sum(user => user.ActiveDeviceCount);
 }
-<!doctype html>
-<html lang="zh-CN">
-<head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>用户管理 - MT播放器</title>
-</head>
-<body>
-<main>
-    <nav><a href="/admin/settings">系统设置</a> · <strong>用户管理</strong></nav>
-    <h1>用户与设备</h1>
-    @if (!string.IsNullOrEmpty(Model.StatusMessage)) { <p role="status">@Model.StatusMessage</p> }
-    <table>
-        <thead><tr><th>邮箱</th><th>角色</th><th>邮箱验证</th><th>状态</th><th>活跃设备</th><th>操作</th></tr></thead>
-        <tbody>
-        @foreach (var user in Model.Users)
-        {
-            <tr>
-                <td>@user.Email</td>
-                <td>@user.Role</td>
-                <td>@(user.EmailVerified ? "已验证" : "未验证")</td>
-                <td>@(user.Disabled ? "已禁用" : "正常")</td>
-                <td>@user.ActiveDeviceCount</td>
-                <td>
-                    <form method="post" style="display:inline">
-                        <input type="hidden" name="userId" value="@user.Id" />
-                        @if (user.Disabled)
-                        {
-                            <button asp-page-handler="Enable" type="submit">启用</button>
-                        }
-                        else
-                        {
-                            <button asp-page-handler="Disable" type="submit">禁用</button>
-                        }
-                        <button asp-page-handler="RevokeAll" type="submit">撤销全部设备</button>
-                    </form>
-                </td>
-            </tr>
-        }
-        </tbody>
-    </table>
-</main>
-</body>
-</html>
+
+@if (!string.IsNullOrEmpty(Model.StatusMessage))
+{
+    <div class="notice" role="status">@Model.StatusMessage</div>
+}
+
+<section class="metric-strip" aria-label="用户概况">
+    <div class="metric"><strong>@Model.Users.Count</strong><span>全部账号</span></div>
+    <div class="metric"><strong>@enabledUsers</strong><span>正常使用</span></div>
+    <div class="metric"><strong>@activeDevices</strong><span>活跃设备</span></div>
+</section>
+
+<section class="table-panel" aria-labelledby="user-list-title">
+    <header class="table-toolbar">
+        <div>
+            <h2 id="user-list-title">账号列表</h2>
+            <p>禁用账号会立即撤销其全部设备会话。</p>
+        </div>
+        <span class="badge good">实时数据</span>
+    </header>
+
+    @if (Model.Users.Count == 0)
+    {
+        <div class="empty-state">还没有用户。开放注册后，新账号会显示在这里。</div>
+    }
+    else
+    {
+        <div class="table-scroll">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>用户</th>
+                        <th>角色</th>
+                        <th>邮箱</th>
+                        <th>账号状态</th>
+                        <th>设备</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var user in Model.Users)
+                {
+                    <tr>
+                        <td>
+                            <div class="user-cell">
+                                <span class="user-avatar" aria-hidden="true">@user.Email[..1]</span>
+                                <span class="user-email">@user.Email</span>
+                            </div>
+                        </td>
+                        <td><span class="role-label">@(user.Role == "admin" ? "管理员" : "用户")</span></td>
+                        <td>
+                            <span class="state-pill @(user.EmailVerified ? string.Empty : "pending")">
+                                @(user.EmailVerified ? "已验证" : "待验证")
+                            </span>
+                        </td>
+                        <td>
+                            <span class="state-pill @(user.Disabled ? "disabled" : string.Empty)">
+                                @(user.Disabled ? "已禁用" : "正常")
+                            </span>
+                        </td>
+                        <td>@user.ActiveDeviceCount 台</td>
+                        <td>
+                            <form class="row-actions" method="post">
+                                <input type="hidden" name="userId" value="@user.Id" />
+                                @if (user.Disabled)
+                                {
+                                    <button class="button small" asp-page-handler="Enable" type="submit">启用账号</button>
+                                }
+                                else
+                                {
+                                    <button class="button small danger" asp-page-handler="Disable" type="submit" data-confirm="确定禁用此账号并撤销全部设备会话吗？">禁用</button>
+                                }
+                                <button class="button small ghost" asp-page-handler="RevokeAll" type="submit" data-confirm="确定让该用户的所有设备退出登录吗？">退出全部设备</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>

@@ -1,0 +1,77 @@
+@{
+    var pageTitle = ViewData["Title"] as string ?? "管理后台";
+    var pageDescription = ViewData["Description"] as string ?? "管理 MT播放器账号与服务设置";
+    var currentPath = Context.Request.Path.Value ?? string.Empty;
+    var settingsActive = currentPath.StartsWith("/admin/settings", StringComparison.OrdinalIgnoreCase);
+    var usersActive = currentPath.StartsWith("/admin/users", StringComparison.OrdinalIgnoreCase);
+}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>@pageTitle - MT播放器</title>
+    <link rel="stylesheet" href="~/css/admin.css" asp-append-version="true" />
+</head>
+<body class="admin-body">
+    <div class="ambient-glow ambient-glow-one" aria-hidden="true"></div>
+    <div class="ambient-glow ambient-glow-two" aria-hidden="true"></div>
+    <div class="admin-shell">
+        <aside class="sidebar" id="admin-sidebar">
+            <a class="brand" href="/admin/settings" aria-label="MT播放器管理后台首页">
+                <span class="brand-mark" aria-hidden="true"><img src="~/images/mtplayer-icon.png" alt="" /></span>
+                <span class="brand-copy">
+                    <strong>MT播放器</strong>
+                    <small>CONTROL DESK</small>
+                </span>
+            </a>
+
+            <nav class="sidebar-nav" aria-label="后台导航">
+                <p class="nav-caption">工作台</p>
+                <a class="nav-item @(settingsActive ? "active" : string.Empty)" href="/admin/settings" aria-current="@(settingsActive ? "page" : null)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.96 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.08A1.7 1.7 0 0 0 4.6 8.96a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 10 3.03V3h4v.08a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.96 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z"/></svg>
+                    <span>系统设置</span>
+                </a>
+                <a class="nav-item @(usersActive ? "active" : string.Empty)" href="/admin/users" aria-current="@(usersActive ? "page" : null)">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span>用户管理</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="privacy-note">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <div><strong>本地部署</strong><small>数据保存在你的服务器</small></div>
+                </div>
+                <form method="post" action="/admin/logout">
+                    <button class="logout-button" type="submit">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+                        退出登录
+                    </button>
+                </form>
+            </div>
+        </aside>
+
+        <main class="admin-main">
+            <header class="topbar">
+                <button class="menu-button" type="button" data-sidebar-toggle aria-label="打开导航" aria-expanded="false">
+                    <span></span><span></span><span></span>
+                </button>
+                <div>
+                    <p class="eyebrow">MT ADMIN</p>
+                    <h1>@pageTitle</h1>
+                    <p>@pageDescription</p>
+                </div>
+                <div class="topbar-badge"><span></span>管理后台</div>
+            </header>
+            <div class="content-frame">
+                @RenderBody()
+            </div>
+        </main>
+    </div>
+    <div class="sidebar-scrim" data-sidebar-toggle aria-hidden="true"></div>
+    <script src="~/js/admin.js" asp-append-version="true"></script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>
