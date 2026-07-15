@@ -1,10 +1,13 @@
 using MTPlayer.Client.Core.Library;
 using MTPlayer.Client.Core.Settings;
+using MTPlayer.Client.Core.Sync;
+using System.IO;
 
 namespace WebHtv.Desktop;
 
 internal sealed class AppSettings
 {
+    public ClientSettings CoreState { get; set; } = new();
     public bool HardwareDecode { get; set; } = true;
     public double DefaultSpeed { get; set; } = 1.0;
     public int DefaultVolume { get; set; } = 80;
@@ -35,10 +38,12 @@ internal sealed class CustomLiveSourceEntry
 internal sealed class AppSettingsStore : IDisposable
 {
     private readonly JsonSettingsStore _store;
+    private readonly SyncQueueStore _queue;
 
     public AppSettingsStore(string filePath)
     {
         _store = new JsonSettingsStore(filePath);
+        _queue = new SyncQueueStore(Path.Combine(Path.GetDirectoryName(filePath)!, "sync-queue.json"));
     }
 
     public async Task<AppSettings> LoadAsync(CancellationToken cancellationToken = default)
@@ -47,6 +52,7 @@ internal sealed class AppSettingsStore : IDisposable
         var groups = settings.ConfigurationGroups.Where(item => !item.IsDeleted).ToList();
         return new AppSettings
         {
+            CoreState = settings,
             HardwareDecode = settings.HardwareDecode,
             DefaultSpeed = settings.DefaultSpeed,
             DefaultVolume = settings.DefaultVolume,
@@ -71,36 +77,85 @@ internal sealed class AppSettingsStore : IDisposable
         };
     }
 
-    public Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
+    public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.UtcNow;
-        var core = new ClientSettings
+        var core = settings.CoreState;
+        var previousSpeed = core.DefaultSpeed;
+        var previousVolume = core.DefaultVolume;
+        var previousCovers = core.UseSourceCovers;
+        core.HardwareDecode = settings.HardwareDecode;
+        core.DefaultSpeed = settings.DefaultSpeed;
+        core.DefaultVolume = settings.DefaultVolume;
+        core.AutoFullscreen = settings.AutoFullscreen;
+        core.UseSourceCovers = settings.UseSourceCovers;
+        core.TmdbApiKey = settings.TmdbApiKey;
+        core.DisabledSiteKeys = [.. settings.DisabledSiteKeys];
+        var existingGroups = core.ConfigurationGroups.ToDictionary(item => item.Id);
+        var activeGroups = settings.ConfigurationSources.Select(item =>
         {
-            HardwareDecode = settings.HardwareDecode,
-            DefaultSpeed = settings.DefaultSpeed,
-            DefaultVolume = settings.DefaultVolume,
-            AutoFullscreen = settings.AutoFullscreen,
-            UseSourceCovers = settings.UseSourceCovers,
-            TmdbApiKey = settings.TmdbApiKey,
-            DisabledSiteKeys = [.. settings.DisabledSiteKeys],
-            ConfigurationGroups = settings.ConfigurationSources.Select(item => new ConfigurationGroupRecord(
-                ParseOrCreateId(item.Id, "configuration", item.Address),
+            var id = ParseOrCreateId(item.Id, "configuration", item.Address);
+            var enabled = string.Equals(item.Id, settings.ActiveConfigurationSourceId, StringComparison.Ordinal);
+            if (existingGroups.TryGetValue(id, out var existing) &&
+                existing.Name == item.Name && existing.Address == item.Address &&
+                existing.IsEnabled == enabled && !existing.IsDeleted)
+            {
+                return existing;
+            }
+
+            return new ConfigurationGroupRecord(
+                id,
                 item.Name,
                 item.Address,
-                string.Equals(item.Id, settings.ActiveConfigurationSourceId, StringComparison.Ordinal),
-                now)).ToList(),
-            CustomLiveSources = settings.CustomLiveSources.Select(item => new CustomLiveSourceRecord(
+                enabled,
+                now,
+                existing?.Version ?? 0);
+        }).ToList();
+        var removedGroups = core.ConfigurationGroups
+            .Where(item => !item.IsDeleted && activeGroups.All(active => active.Id != item.Id))
+            .Select(item => item with { IsDeleted = true, ModifiedAtUtc = now })
+            .ToList();
+        core.ConfigurationGroups =
+        [
+            .. core.ConfigurationGroups.Where(item => item.IsDeleted),
+            .. removedGroups,
+            .. activeGroups,
+        ];
+        core.CustomLiveSources = settings.CustomLiveSources.Select(item => new CustomLiveSourceRecord(
                 ParseOrCreateId(item.Id, "live", item.Address),
                 item.Name,
                 item.Address,
                 item.EpgAddress,
-                now)).ToList(),
-        };
-        return _store.SaveAsync(core, cancellationToken);
+                now)).ToList();
+        await _store.SaveAsync(core, cancellationToken);
+        foreach (var group in activeGroups.Concat(removedGroups).Where(item =>
+            !existingGroups.TryGetValue(item.Id, out var existing) || existing != item))
+        {
+            await _queue.EnqueueAsync(SyncMapper.ToMutation(group), cancellationToken);
+        }
+
+        if (previousSpeed != core.DefaultSpeed)
+        {
+            await _queue.EnqueueAsync(SyncMapper.Preference(core, "defaultSpeed", core.DefaultSpeed, now), cancellationToken);
+        }
+
+        if (previousVolume != core.DefaultVolume)
+        {
+            await _queue.EnqueueAsync(SyncMapper.Preference(core, "defaultVolume", core.DefaultVolume, now), cancellationToken);
+        }
+
+        if (previousCovers != core.UseSourceCovers)
+        {
+            await _queue.EnqueueAsync(SyncMapper.Preference(core, "useSourceCovers", core.UseSourceCovers, now), cancellationToken);
+        }
     }
 
     private static Guid ParseOrCreateId(string? value, string kind, string address) =>
         Guid.TryParse(value, out var parsed) ? parsed : JsonLibraryStore.StableId(kind, address);
 
-    public void Dispose() => _store.Dispose();
+    public void Dispose()
+    {
+        _store.Dispose();
+        _queue.Dispose();
+    }
 }

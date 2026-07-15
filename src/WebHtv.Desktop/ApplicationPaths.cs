@@ -18,6 +18,8 @@ internal static class ApplicationPaths
 
     public static string AccountTokenFilePath { get; } = Path.Combine(ApplicationDataDirectory, "account-token.bin");
 
+    public static string SyncQueueFilePath { get; } = Path.Combine(ApplicationDataDirectory, "sync-queue.json");
+
     private static string ResolveApplicationDataDirectory()
     {
         if (Environment.GetEnvironmentVariable("WEBHTV_DATA_DIRECTORY") is { Length: > 0 } overrideDirectory)

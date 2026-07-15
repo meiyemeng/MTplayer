@@ -100,6 +100,22 @@ public sealed class JsonLibraryStoreTests : IDisposable
         Assert.NotEqual(first, JsonLibraryStore.StableId("playback", "source", "content"));
     }
 
+    [Fact]
+    public async Task Local_delete_keeps_versioned_tombstone_for_other_devices()
+    {
+        var path = Path.Combine(_directory, "tombstone.json");
+        using var store = new JsonLibraryStore(path);
+        var favorite = new FavoriteRecord(
+            Guid.NewGuid(), "source", "content", "电影", "标题", "", "", DateTimeOffset.UtcNow, 4);
+        await store.SaveAsync(new LibrarySnapshot { Favorites = [favorite] });
+
+        Assert.False(await store.ToggleFavoriteAsync(favorite with { ModifiedAtUtc = DateTimeOffset.UtcNow.AddMinutes(1) }));
+
+        var tombstone = Assert.Single((await store.LoadAsync()).Favorites);
+        Assert.True(tombstone.IsDeleted);
+        Assert.Equal(4, tombstone.Version);
+    }
+
     private string Write(string name, string content)
     {
         Directory.CreateDirectory(_directory);

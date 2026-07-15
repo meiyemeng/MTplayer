@@ -1,4 +1,6 @@
 using MTPlayer.Client.Core.Library;
+using MTPlayer.Client.Core.Sync;
+using System.IO;
 
 namespace WebHtv.Desktop;
 
@@ -36,10 +38,12 @@ internal sealed class LibraryDocument
 internal sealed class LibraryStore : IDisposable
 {
     private readonly JsonLibraryStore _store;
+    private readonly SyncQueueStore _queue;
 
     public LibraryStore(string filePath)
     {
         _store = new JsonLibraryStore(filePath);
+        _queue = new SyncQueueStore(Path.Combine(Path.GetDirectoryName(filePath)!, "sync-queue.json"));
     }
 
     public async Task<LibraryDocument> LoadAsync(CancellationToken cancellationToken = default)
@@ -70,8 +74,9 @@ internal sealed class LibraryStore : IDisposable
         };
     }
 
-    public Task<bool> ToggleFavoriteAsync(PosterCard card, CancellationToken cancellationToken = default) =>
-        _store.ToggleFavoriteAsync(new FavoriteRecord(
+    public async Task<bool> ToggleFavoriteAsync(PosterCard card, CancellationToken cancellationToken = default)
+    {
+        var added = await _store.ToggleFavoriteAsync(new FavoriteRecord(
             JsonLibraryStore.StableId("favorite", card.SourceKey, card.Id),
             card.SourceKey,
             card.Id,
@@ -80,15 +85,21 @@ internal sealed class LibraryStore : IDisposable
             card.Caption,
             card.CoverUrl,
             DateTimeOffset.UtcNow), cancellationToken);
+        var stored = (await _store.LoadAsync(cancellationToken)).Favorites.Single(item =>
+            item.SourceKey == card.SourceKey && item.ContentId == card.Id);
+        await _queue.EnqueueAsync(SyncMapper.ToMutation(stored), cancellationToken);
+        return added;
+    }
 
-    public Task SaveHistoryAsync(
+    public async Task SaveHistoryAsync(
         PosterCard card,
         int sourceIndex,
         int episodeIndex,
         long positionMs,
         long durationMs,
-        CancellationToken cancellationToken = default) =>
-        _store.SavePlaybackAsync(new PlaybackRecord(
+        CancellationToken cancellationToken = default)
+    {
+        await _store.SavePlaybackAsync(new PlaybackRecord(
             JsonLibraryStore.StableId("playback", card.SourceKey, card.Id),
             card.SourceKey,
             card.Id,
@@ -105,9 +116,20 @@ internal sealed class LibraryStore : IDisposable
             Caption = card.Caption,
             CoverUrl = card.CoverUrl,
         }, cancellationToken: cancellationToken);
+        var stored = (await _store.LoadAsync(cancellationToken)).PlaybackHistory.First(item =>
+            item.SourceKey == card.SourceKey && item.ContentId == card.Id);
+        await _queue.EnqueueAsync(SyncMapper.ToMutation(stored), cancellationToken);
+    }
 
-    public Task ClearHistoryAsync(CancellationToken cancellationToken = default) =>
-        _store.ClearPlaybackHistoryAsync(cancellationToken);
+    public async Task ClearHistoryAsync(CancellationToken cancellationToken = default)
+    {
+        await _store.ClearPlaybackHistoryAsync(cancellationToken);
+        var deleted = (await _store.LoadAsync(cancellationToken)).PlaybackHistory.Where(item => item.IsDeleted);
+        foreach (var item in deleted)
+        {
+            await _queue.EnqueueAsync(SyncMapper.ToMutation(item), cancellationToken);
+        }
+    }
 
     public async Task<SkipMarker?> GetSkipMarkerAsync(
         string sourceKey,
@@ -164,7 +186,18 @@ internal sealed class LibraryStore : IDisposable
         }
 
         await _store.SaveSkipMarkerAsync(marker, sourceKey, id, sourceKey, lineName, cancellationToken);
+        var stored = (await _store.LoadAsync(cancellationToken)).SkipMarkers.SingleOrDefault(item =>
+            item.SourceKey == sourceKey && item.ContentId == id &&
+            item.InterfaceKey == sourceKey && item.LineName == lineName);
+        if (stored is not null)
+        {
+            await _queue.EnqueueAsync(SyncMapper.ToMutation(stored), cancellationToken);
+        }
     }
 
-    public void Dispose() => _store.Dispose();
+    public void Dispose()
+    {
+        _store.Dispose();
+        _queue.Dispose();
+    }
 }

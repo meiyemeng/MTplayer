@@ -16,7 +16,10 @@ public sealed class ClientSettings
     public List<CustomLiveSourceRecord> CustomLiveSources { get; set; } = [];
     public string PosterDensity { get; set; } = "standard";
     public long SyncCursor { get; set; }
+    public Dictionary<string, PreferenceSyncState> PreferenceStates { get; set; } = new(StringComparer.Ordinal);
 }
+
+public sealed record PreferenceSyncState(long Version, DateTimeOffset ModifiedAtUtc, bool IsDeleted = false);
 
 public sealed record CustomLiveSourceRecord(
     Guid Id,

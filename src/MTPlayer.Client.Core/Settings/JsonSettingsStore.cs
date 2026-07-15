@@ -1,16 +1,21 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 using MTPlayer.Client.Core.Library;
 
 namespace MTPlayer.Client.Core.Settings;
 
 public sealed class JsonSettingsStore(string filePath) : IClientSettingsStore, IDisposable
 {
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> FileGates =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
         PropertyNameCaseInsensitive = true,
     };
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly SemaphoreSlim _gate = FileGates.GetOrAdd(
+        Path.GetFullPath(filePath),
+        _ => new SemaphoreSlim(1, 1));
 
     public string FilePath { get; } = Path.GetFullPath(filePath);
 
@@ -103,6 +108,7 @@ public sealed class JsonSettingsStore(string filePath) : IClientSettingsStore, I
         settings.CustomLiveSources ??= [];
         settings.PosterDensity = string.IsNullOrWhiteSpace(settings.PosterDensity) ? "standard" : settings.PosterDensity;
         settings.SyncCursor = Math.Max(0, settings.SyncCursor);
+        settings.PreferenceStates ??= new Dictionary<string, PreferenceSyncState>(StringComparer.Ordinal);
         return settings;
     }
 
@@ -149,7 +155,7 @@ public sealed class JsonSettingsStore(string filePath) : IClientSettingsStore, I
         return Normalize(settings);
     }
 
-    public void Dispose() => _gate.Dispose();
+    public void Dispose() => GC.SuppressFinalize(this);
 
     private sealed class LegacySettings
     {

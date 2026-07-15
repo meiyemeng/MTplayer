@@ -1,17 +1,22 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Collections.Concurrent;
 
 namespace MTPlayer.Client.Core.Library;
 
 public sealed class JsonLibraryStore(string filePath) : ILibraryStore, IDisposable
 {
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> FileGates =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true,
         PropertyNameCaseInsensitive = true,
     };
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly SemaphoreSlim _gate = FileGates.GetOrAdd(
+        Path.GetFullPath(filePath),
+        _ => new SemaphoreSlim(1, 1));
 
     public string FilePath { get; } = Path.GetFullPath(filePath);
 
@@ -51,10 +56,24 @@ public sealed class JsonLibraryStore(string filePath) : ILibraryStore, IDisposab
         {
             var library = await LoadCoreAsync(cancellationToken);
             var existing = library.Favorites.FindIndex(item =>
-                item.SourceKey == favorite.SourceKey && item.ContentId == favorite.ContentId && !item.IsDeleted);
-            if (existing >= 0)
+                item.SourceKey == favorite.SourceKey && item.ContentId == favorite.ContentId);
+            var wasActive = existing >= 0 && !library.Favorites[existing].IsDeleted;
+            if (wasActive)
             {
-                library.Favorites.RemoveAt(existing);
+                var current = library.Favorites[existing];
+                library.Favorites[existing] = current with
+                {
+                    ModifiedAtUtc = favorite.ModifiedAtUtc,
+                    IsDeleted = true,
+                };
+            }
+            else if (existing >= 0)
+            {
+                library.Favorites[existing] = favorite with
+                {
+                    Version = library.Favorites[existing].Version,
+                    IsDeleted = false,
+                };
             }
             else
             {
@@ -62,7 +81,7 @@ public sealed class JsonLibraryStore(string filePath) : ILibraryStore, IDisposab
             }
 
             await SaveCoreAsync(library, cancellationToken);
-            return existing < 0;
+            return !wasActive;
         }
         finally
         {
@@ -79,9 +98,15 @@ public sealed class JsonLibraryStore(string filePath) : ILibraryStore, IDisposab
         try
         {
             var library = await LoadCoreAsync(cancellationToken);
+            var existing = library.PlaybackHistory.FirstOrDefault(item =>
+                item.SourceKey == playback.SourceKey && item.ContentId == playback.ContentId);
             library.PlaybackHistory.RemoveAll(item =>
                 item.SourceKey == playback.SourceKey && item.ContentId == playback.ContentId);
-            library.PlaybackHistory.Insert(0, playback);
+            library.PlaybackHistory.Insert(0, playback with
+            {
+                Version = playback.Version == 0 ? existing?.Version ?? 0 : playback.Version,
+                IsDeleted = false,
+            });
             if (library.PlaybackHistory.Count > maximumHistory)
             {
                 library.PlaybackHistory.RemoveRange(maximumHistory, library.PlaybackHistory.Count - maximumHistory);
@@ -101,7 +126,12 @@ public sealed class JsonLibraryStore(string filePath) : ILibraryStore, IDisposab
         try
         {
             var library = await LoadCoreAsync(cancellationToken);
-            library.PlaybackHistory.Clear();
+            var now = DateTimeOffset.UtcNow;
+            library.PlaybackHistory = library.PlaybackHistory.Select(item => item with
+            {
+                WatchedAtUtc = now,
+                IsDeleted = true,
+            }).ToList();
             await SaveCoreAsync(library, cancellationToken);
         }
         finally
@@ -122,12 +152,27 @@ public sealed class JsonLibraryStore(string filePath) : ILibraryStore, IDisposab
         try
         {
             var library = await LoadCoreAsync(cancellationToken);
+            var existing = library.SkipMarkers.FirstOrDefault(item =>
+                item.SourceKey == sourceKey && item.ContentId == contentId &&
+                item.InterfaceKey == interfaceKey && item.LineName == lineName);
             library.SkipMarkers.RemoveAll(item =>
                 item.SourceKey == sourceKey && item.ContentId == contentId &&
                 item.InterfaceKey == interfaceKey && item.LineName == lineName);
             if (marker is not null)
             {
-                library.SkipMarkers.Add(marker);
+                library.SkipMarkers.Add(marker with
+                {
+                    Version = marker.Version == 0 ? existing?.Version ?? 0 : marker.Version,
+                    IsDeleted = false,
+                });
+            }
+            else if (existing is not null)
+            {
+                library.SkipMarkers.Add(existing with
+                {
+                    ModifiedAtUtc = DateTimeOffset.UtcNow,
+                    IsDeleted = true,
+                });
             }
 
             await SaveCoreAsync(library, cancellationToken);
@@ -248,7 +293,7 @@ public sealed class JsonLibraryStore(string filePath) : ILibraryStore, IDisposab
                 history.SourceKey,
                 history.Id,
                 $"source-index:{Math.Max(0, history.SourceIndex)}",
-                string.Empty,
+                $"source-index:{Math.Max(0, history.SourceIndex)}",
                 Math.Max(0, history.EpisodeIndex),
                 Math.Max(0, history.PositionMs),
                 Math.Max(0, history.DurationMs),
@@ -265,11 +310,11 @@ public sealed class JsonLibraryStore(string filePath) : ILibraryStore, IDisposab
         foreach (var marker in legacy.SkipMarkers)
         {
             migrated.SkipMarkers.Add(new SkipMarkerRecord(
-                StableId("skip", marker.SourceKey, marker.Id, string.Empty, string.Empty),
+                StableId("skip", marker.SourceKey, marker.Id, marker.SourceKey, "legacy"),
                 marker.SourceKey,
                 marker.Id,
-                string.Empty,
-                string.Empty,
+                marker.SourceKey,
+                "legacy",
                 (int)Math.Clamp(marker.IntroEndMs / 1000, 0, int.MaxValue),
                 0,
                 DateTimeOffset.UnixEpoch));
@@ -279,7 +324,7 @@ public sealed class JsonLibraryStore(string filePath) : ILibraryStore, IDisposab
         return migrated;
     }
 
-    public void Dispose() => _gate.Dispose();
+    public void Dispose() => GC.SuppressFinalize(this);
 
     private sealed class LegacyLibrary
     {
