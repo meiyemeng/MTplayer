@@ -13,6 +13,7 @@ using MTPlayer.Server.Devices;
 using MTPlayer.Server.Mail;
 using MTPlayer.Server.Security;
 using MTPlayer.Server.Settings;
+using MTPlayer.Server.Sync;
 
 var builder = WebApplication.CreateBuilder(args);
 const string postgreSqlConnectionStringKey = "ConnectionStrings:PostgreSQL";
@@ -86,6 +87,7 @@ builder.Services.AddScoped<IAuthorizationHandler, SyncAccessHandler>();
 builder.Services.AddScoped<CurrentUser>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<DeviceService>();
+builder.Services.AddScoped<SyncService>();
 builder.Services.AddScoped<AdminAuthenticationService>();
 builder.Services.AddScoped<AdminCookieEvents>();
 builder.Services.AddSingleton<AdminSetupService>();
@@ -160,6 +162,7 @@ app.UseAuthorization();
 app.MapAuthEndpoints();
 app.MapAdminEndpoints();
 app.MapDeviceEndpoints();
+app.MapSyncEndpoints();
 app.MapRazorPages();
 app.Run();
 

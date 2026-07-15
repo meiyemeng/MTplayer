@@ -28,6 +28,7 @@ public sealed record SyncPushResult(
     long Version,
     DateTimeOffset ServerModifiedAtUtc,
     bool Accepted,
-    string? ErrorCode);
+    string? ErrorCode,
+    SyncMutation? Current = null);
 
 public sealed record SyncPullResponse(long Cursor, IReadOnlyList<SyncMutation> Changes);
