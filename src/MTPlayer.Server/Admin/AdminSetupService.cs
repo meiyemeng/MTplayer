@@ -24,6 +24,7 @@ public sealed class AdminSetupService(
     IConfiguration configuration,
     TimeProvider timeProvider)
 {
+    private const int MaximumSetupTokenLength = 4_096;
     public const string CompletedSettingKey = "AdminSetupCompleted";
     private const long SetupAdvisoryLock = 7_095_419_832_766_712_381;
     private readonly string _configuredToken = configuration["ADMIN_SETUP_TOKEN"] ?? string.Empty;
@@ -98,11 +99,15 @@ public sealed class AdminSetupService(
 
     private static bool FixedTimeTokenEquals(string expected, string supplied)
     {
-        var expectedHash = SHA256.HashData(Encoding.UTF8.GetBytes(expected));
-        var suppliedHash = SHA256.HashData(Encoding.UTF8.GetBytes(supplied));
+        var expectedLengthValid = expected.Length is > 0 and <= MaximumSetupTokenLength;
+        var suppliedLengthValid = supplied.Length <= MaximumSetupTokenLength;
+        var expectedHash = SHA256.HashData(Encoding.UTF8.GetBytes(expectedLengthValid ? expected : string.Empty));
+        var suppliedHash = SHA256.HashData(Encoding.UTF8.GetBytes(suppliedLengthValid ? supplied : string.Empty));
         try
         {
-            return expected.Length > 0 && CryptographicOperations.FixedTimeEquals(expectedHash, suppliedHash);
+            return expectedLengthValid &&
+                suppliedLengthValid &&
+                CryptographicOperations.FixedTimeEquals(expectedHash, suppliedHash);
         }
         finally
         {

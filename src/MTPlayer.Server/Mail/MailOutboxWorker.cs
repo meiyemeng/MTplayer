@@ -41,6 +41,11 @@ public sealed class MailOutboxDispatcher(
     SystemSettingsService settingsService,
     ISmtpEmailSender sender)
 {
+    // SMTP operations are sequential and may each consume several socket timeouts.
+    // Claim one row at a time so no queued row can outlive the ten-minute lease
+    // while waiting behind other messages in this worker.
+    internal const int DispatchClaimSize = 1;
+
     public async Task<int> DispatchBatchAsync(CancellationToken cancellationToken)
     {
         var settings = await settingsService.GetSnapshotAsync(cancellationToken);
@@ -49,7 +54,7 @@ public sealed class MailOutboxDispatcher(
             return 0;
         }
 
-        var claimed = await outbox.ClaimBatchAsync(20, cancellationToken);
+        var claimed = await outbox.ClaimBatchAsync(DispatchClaimSize, cancellationToken);
         foreach (var message in claimed)
         {
             try

@@ -23,6 +23,7 @@ public enum AuthStatus
     Disabled,
     VerificationRequired,
     RegistrationClosed,
+    PasswordResetClosed,
 }
 
 public sealed record AuthResult(AuthStatus Status, TokenResponse? Tokens = null);
@@ -152,6 +153,11 @@ public sealed class AuthService(
                 return new AuthResult(AuthStatus.InvalidInput);
             }
 
+            var requireVerifiedEmail = await ReadBoolSettingAsync(
+                "RequireVerifiedEmail",
+                true,
+                cancellationToken);
+
             var userSnapshot = await db.Users.AsNoTracking()
                 .Where(value => value.NormalizedEmail == normalizedEmail)
                 .Select(value => new { value.Id, value.PasswordHash })
@@ -182,7 +188,7 @@ public sealed class AuthService(
                     return new AuthResult(AuthStatus.Disabled);
                 }
 
-                if (!user.EmailVerified)
+                if (requireVerifiedEmail && !user.EmailVerified)
                 {
                     unverifiedUser = user;
                     await transaction.CommitAsync(cancellationToken);
@@ -237,6 +243,10 @@ public sealed class AuthService(
             return new AuthResult(AuthStatus.InvalidCredentials);
         }
 
+        var requireVerifiedEmail = await ReadBoolSettingAsync(
+            "RequireVerifiedEmail",
+            true,
+            cancellationToken);
         var consumed = await db.ConsumedRefreshTokens.AsNoTracking()
             .SingleOrDefaultAsync(token => token.TokenHash == oldHash, cancellationToken);
         if (consumed is not null)
@@ -273,7 +283,7 @@ public sealed class AuthService(
 
         var accountFailure = user.Disabled
             ? AuthStatus.Disabled
-            : !user.EmailVerified
+            : requireVerifiedEmail && !user.EmailVerified
                 ? AuthStatus.InvalidCredentials
                 : (AuthStatus?)null;
 
@@ -365,6 +375,11 @@ public sealed class AuthService(
         if (!HasValidPasswordLength(password))
         {
             return AuthStatus.InvalidInput;
+        }
+
+        if (!await ReadBoolSettingAsync("PasswordResetEnabled", true, cancellationToken))
+        {
+            return AuthStatus.PasswordResetClosed;
         }
 
         if (!TryHashToken(token, out var tokenHash))

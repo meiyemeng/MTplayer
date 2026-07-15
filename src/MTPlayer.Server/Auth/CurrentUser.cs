@@ -23,9 +23,19 @@ public sealed class CurrentUser(ApiDbContext db)
             return false;
         }
 
-        return await db.Users.AnyAsync(
-            user => user.Id == userId && user.EmailVerified && !user.Disabled,
-            cancellationToken);
+        var account = await db.Users.AsNoTracking()
+            .Where(user => user.Id == userId)
+            .Select(user => new { user.EmailVerified, user.Disabled })
+            .SingleOrDefaultAsync(cancellationToken);
+        var requireVerifiedValue = await db.SystemSettings.AsNoTracking()
+            .Where(setting => setting.Key == "RequireVerifiedEmail" && !setting.IsEncrypted)
+            .Select(setting => setting.Value)
+            .SingleOrDefaultAsync(cancellationToken);
+        var requireVerifiedEmail = !bool.TryParse(requireVerifiedValue, out var parsedRequireVerified) ||
+            parsedRequireVerified;
+        return account is not null &&
+            !account.Disabled &&
+            (account.EmailVerified || !requireVerifiedEmail);
     }
 }
 

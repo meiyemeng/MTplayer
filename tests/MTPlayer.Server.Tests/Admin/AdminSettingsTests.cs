@@ -9,6 +9,7 @@ using MTPlayer.Contracts;
 using MTPlayer.Server.Auth;
 using MTPlayer.Server.Data;
 using MTPlayer.Server.Tests.Auth;
+using MTPlayer.Server.Settings;
 using Xunit;
 
 namespace MTPlayer.Server.Tests.Admin;
@@ -146,6 +147,9 @@ public sealed class AdminSettingsTests(PostgreSqlAuthFixture fixture) : IClassFi
             testBodyTemplate = "<p>{email}</p>",
         });
         Assert.Equal(HttpStatusCode.NoContent, saved.StatusCode);
+        var publicUrlProbe = Assert.IsType<AcceptingPublicBaseUrlProbe>(
+            factory.Services.GetRequiredService<IPublicBaseUrlProbe>());
+        Assert.Contains(new Uri(publicUrl), publicUrlProbe.ProbedUris);
 
         var returned = await client.GetStringAsync("/api/v1/admin/settings");
         Assert.DoesNotContain(smtpPassword, returned, StringComparison.Ordinal);

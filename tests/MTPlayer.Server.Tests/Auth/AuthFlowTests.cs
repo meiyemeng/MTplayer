@@ -11,13 +11,16 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using MTPlayer.Contracts;
 using MTPlayer.Server.Auth;
 using MTPlayer.Server.Data;
 using MTPlayer.Server.Security;
+using MTPlayer.Server.Settings;
 using Npgsql;
 using Xunit;
 
@@ -645,6 +648,96 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
         Assert.DoesNotContain(resetToken, allLogs, StringComparison.Ordinal);
     }
 
+    [DockerFact]
+    public async Task Require_verified_email_switch_applies_to_existing_unverified_accounts_immediately()
+    {
+        var email = UniqueEmail();
+        Assert.Equal(
+            HttpStatusCode.Accepted,
+            (await fixture.Client.PostAsJsonAsync(
+                "/api/v1/auth/register",
+                new RegisterRequest(email, PostgreSqlAuthFixture.Password))).StatusCode);
+
+        await SetBooleanSettingAsync("RequireVerifiedEmail", false);
+        try
+        {
+            var login = await fixture.Client.PostAsJsonAsync(
+                "/api/v1/auth/login",
+                new LoginRequest(email, PostgreSqlAuthFixture.Password, "免验证电脑", "windows"));
+            var pair = await ReadTokenPairAsync(login);
+            Assert.True(await fixture.IsJwtAcceptedAsync(pair.AccessToken));
+            Assert.True(await fixture.CanSyncAsync(pair.AccessToken));
+
+            await SetBooleanSettingAsync("RequireVerifiedEmail", true);
+            Assert.False(await fixture.IsJwtAcceptedAsync(pair.AccessToken));
+            Assert.False(await fixture.CanSyncAsync(pair.AccessToken));
+            Assert.Equal(
+                HttpStatusCode.Unauthorized,
+                (await fixture.Client.PostAsJsonAsync(
+                    "/api/v1/auth/refresh",
+                    new RefreshRequest(pair.RefreshToken))).StatusCode);
+        }
+        finally
+        {
+            await SetBooleanSettingAsync("RequireVerifiedEmail", true);
+        }
+    }
+
+    [DockerFact]
+    public async Task Disabling_password_reset_invalidates_already_issued_reset_tokens()
+    {
+        var email = UniqueEmail();
+        await fixture.RegisterAndVerifyAsync(email);
+        await fixture.Client.PostAsJsonAsync("/api/v1/auth/forgot-password", new { email });
+        var token = await fixture.ReadLatestEmailTokenAsync(email, "reset");
+
+        await SetBooleanSettingAsync("PasswordResetEnabled", false);
+        try
+        {
+            var blocked = await fixture.Client.PostAsJsonAsync(
+                "/api/v1/auth/reset-password",
+                new { token, password = "New-Password-Disabled-2026" });
+            Assert.Equal(HttpStatusCode.Forbidden, blocked.StatusCode);
+            var problem = await blocked.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("password_reset_disabled", problem.GetProperty("code").GetString());
+
+            await SetBooleanSettingAsync("PasswordResetEnabled", true);
+            Assert.Equal(
+                HttpStatusCode.NoContent,
+                (await fixture.Client.PostAsJsonAsync(
+                    "/api/v1/auth/reset-password",
+                    new { token, password = "New-Password-Enabled-2026" })).StatusCode);
+        }
+        finally
+        {
+            await SetBooleanSettingAsync("PasswordResetEnabled", true);
+        }
+    }
+
+    private async Task SetBooleanSettingAsync(string key, bool value)
+    {
+        await using var db = fixture.CreateDbContext();
+        var setting = await db.SystemSettings.SingleOrDefaultAsync(item => item.Key == key);
+        if (setting is null)
+        {
+            db.SystemSettings.Add(new SystemSettingEntity
+            {
+                Key = key,
+                Value = value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                IsEncrypted = false,
+                UpdatedAtUtc = DateTimeOffset.UtcNow,
+            });
+        }
+        else
+        {
+            setting.Value = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            setting.IsEncrypted = false;
+            setting.UpdatedAtUtc = DateTimeOffset.UtcNow;
+        }
+
+        await db.SaveChangesAsync();
+    }
+
     private static string UniqueEmail() => $"auth-{Guid.NewGuid():N}@example.com";
 
     private static async Task<TokenResponse> ReadTokenPairAsync(HttpResponseMessage response)
@@ -753,6 +846,11 @@ public sealed class PostgreSqlAuthFixture : IAsyncLifetime
             }
 
             builder.ConfigureLogging(logging => logging.AddProvider(Logs));
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IPublicBaseUrlProbe>();
+                services.AddSingleton<IPublicBaseUrlProbe, AcceptingPublicBaseUrlProbe>();
+            });
         });
 
     public async Task RegisterAndVerifyAsync(string email)
@@ -1068,6 +1166,20 @@ public sealed class PostgreSqlAuthFixture : IAsyncLifetime
 
         throw new TimeoutException(
             $"Request did not reach the expected database lock for {firstQueryPattern} / {secondQueryPattern}.");
+    }
+}
+
+internal sealed class AcceptingPublicBaseUrlProbe : IPublicBaseUrlProbe
+{
+    private readonly ConcurrentQueue<Uri> _probedUris = new();
+
+    public IReadOnlyCollection<Uri> ProbedUris => _probedUris.ToArray();
+
+    public Task EnsureReachableAsync(Uri publicBaseUri, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _probedUris.Enqueue(publicBaseUri);
+        return Task.CompletedTask;
     }
 }
 

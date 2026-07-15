@@ -113,13 +113,21 @@ public sealed class ConfigureJwtBearerOptions(JwtOptions jwtOptions) : IConfigur
 
                 var tokenRole = context.Principal?.FindFirst("role")?.Value;
                 var db = context.HttpContext.RequestServices.GetRequiredService<ApiDbContext>();
-                var active = tokenRole is not null && await db.Users.AnyAsync(
-                    user =>
-                        user.Id == userId &&
-                        user.EmailVerified &&
-                        !user.Disabled &&
-                        user.Role == tokenRole,
-                    context.HttpContext.RequestAborted);
+                var account = await db.Users.AsNoTracking()
+                    .Where(user => user.Id == userId)
+                    .Select(user => new { user.EmailVerified, user.Disabled, user.Role })
+                    .SingleOrDefaultAsync(context.HttpContext.RequestAborted);
+                var requireVerifiedValue = await db.SystemSettings.AsNoTracking()
+                    .Where(setting => setting.Key == "RequireVerifiedEmail" && !setting.IsEncrypted)
+                    .Select(setting => setting.Value)
+                    .SingleOrDefaultAsync(context.HttpContext.RequestAborted);
+                var requireVerifiedEmail = !bool.TryParse(requireVerifiedValue, out var parsedRequireVerified) ||
+                    parsedRequireVerified;
+                var active = tokenRole is not null &&
+                    account is not null &&
+                    !account.Disabled &&
+                    account.Role == tokenRole &&
+                    (account.EmailVerified || !requireVerifiedEmail);
                 if (!active)
                 {
                     context.Fail("account_not_active");

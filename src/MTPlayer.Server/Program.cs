@@ -87,6 +87,7 @@ builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<AdminAuthenticationService>();
 builder.Services.AddScoped<AdminCookieEvents>();
 builder.Services.AddSingleton<AdminSetupService>();
+builder.Services.AddSingleton<IPublicBaseUrlProbe, PublicBaseUrlProbe>();
 builder.Services.AddSingleton<SystemSettingsService>();
 builder.Services.AddSingleton<MailOutboxService>();
 builder.Services.AddScoped<MailOutboxDispatcher>();

@@ -11,6 +11,7 @@ namespace MTPlayer.Server.Pages.Admin;
 
 [AllowAnonymous]
 [IgnoreAntiforgeryToken]
+[RequestSizeLimit(16 * 1024)]
 public sealed class SetupModel(AdminSetupService setup, IAntiforgery antiforgery) : PageModel
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);

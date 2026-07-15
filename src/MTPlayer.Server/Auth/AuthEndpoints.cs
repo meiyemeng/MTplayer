@@ -89,6 +89,7 @@ public static class AuthEndpoints
         return status switch
         {
             AuthStatus.Success => Results.NoContent(),
+            AuthStatus.PasswordResetClosed => Problem(context, "password_reset_disabled", "管理员已关闭密码重置。", StatusCodes.Status403Forbidden),
             AuthStatus.InvalidInput => Problem(context, "invalid_password", "密码长度必须为 10 到 128 个字符。", StatusCodes.Status400BadRequest),
             _ => Problem(context, "invalid_or_expired_token", "重置令牌无效、已使用或已过期。", StatusCodes.Status400BadRequest),
         };

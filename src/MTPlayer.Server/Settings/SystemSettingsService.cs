@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net.Mail;
+using System.Net.Sockets;
 using Microsoft.EntityFrameworkCore;
 using MTPlayer.Server.Data;
 using MTPlayer.Server.Mail;
@@ -30,6 +31,9 @@ public sealed record AdminSettingsUpdate
     public string? TestBodyTemplate { get; init; }
     public bool ClearPublicBaseUrl { get; init; }
     public bool ClearSmtpPassword { get; init; }
+
+    public override string ToString() =>
+        $"{nameof(AdminSettingsUpdate)} {{ PublicBaseUrl = [已隐藏], NewSmtpPassword = [已隐藏] }}";
 }
 
 public sealed record AdminSettingsView(
@@ -83,6 +87,9 @@ public sealed record SystemSettingsSnapshot(
         !string.IsNullOrWhiteSpace(SmtpPassword) &&
         !string.IsNullOrWhiteSpace(SmtpFromName) &&
         MailAddress.TryCreate(SmtpFromAddress, out _);
+
+    public override string ToString() =>
+        $"{nameof(SystemSettingsSnapshot)} {{ PublicBaseUrl = [已隐藏], SmtpPassword = [已隐藏], MailConfigurationComplete = {MailConfigurationComplete} }}";
 }
 
 public sealed class SettingsValidationException(string message) : ArgumentException(message);
@@ -90,6 +97,7 @@ public sealed class SettingsValidationException(string message) : ArgumentExcept
 public sealed class SystemSettingsService(
     IDbContextFactory<ApiDbContext> dbContextFactory,
     ISecretProtector secretProtector,
+    IPublicBaseUrlProbe publicBaseUrlProbe,
     TimeProvider timeProvider)
 {
     public const string PublicBaseUrlKey = "PublicBaseUrl";
@@ -143,6 +151,25 @@ public sealed class SystemSettingsService(
     {
         ArgumentNullException.ThrowIfNull(update);
         var normalized = ValidateAndNormalize(update);
+        if (normalized.PublicBaseUrl is not null)
+        {
+            try
+            {
+                await publicBaseUrlProbe.EnsureReachableAsync(
+                    new Uri(normalized.PublicBaseUrl, UriKind.Absolute),
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception) when (
+                exception is HttpRequestException or IOException or SocketException or TaskCanceledException or InvalidOperationException)
+            {
+                throw new SettingsValidationException("公开地址无法通过安全的 HTTPS 连通性检查。");
+            }
+        }
+
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         await db.Database.ExecuteSqlInterpolatedAsync(
@@ -196,6 +223,7 @@ public sealed class SystemSettingsService(
 
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
             !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            !uri.IsDefaultPort ||
             string.IsNullOrEmpty(uri.Host) ||
             !string.IsNullOrEmpty(uri.UserInfo) ||
             uri.AbsolutePath != "/" ||
