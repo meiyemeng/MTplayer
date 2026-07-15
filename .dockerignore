@@ -1,0 +1,14 @@
+.git
+.vs
+.idea
+.superpowers
+artifacts
+build
+installer/out
+**/bin
+**/obj
+**/.env
+**/volumes
+test-results
+*.user
+*.suo

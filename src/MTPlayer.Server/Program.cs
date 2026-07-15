@@ -3,6 +3,7 @@ using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -10,6 +11,7 @@ using MTPlayer.Server.Auth;
 using MTPlayer.Server.Admin;
 using MTPlayer.Server.Data;
 using MTPlayer.Server.Devices;
+using MTPlayer.Server.Diagnostics;
 using MTPlayer.Server.Mail;
 using MTPlayer.Server.Security;
 using MTPlayer.Server.Settings;
@@ -39,6 +41,8 @@ if (string.IsNullOrWhiteSpace(postgreSqlConnectionString))
 
 builder.Services.AddDbContextFactory<ApiDbContext>(options =>
     options.UseNpgsql(postgreSqlConnectionString));
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    ForwardedHeaderConfiguration.Apply(options, builder.Configuration));
 builder.Services.AddSingleton<ISecretProtector>(
     _ => new AesGcmSecretProtector(dataEncryptionKey));
 builder.Services.AddSingleton<PasswordHasher>();
@@ -112,6 +116,8 @@ builder.Services.AddSingleton(serviceProvider => new AuthTiming(
         1_000))));
 builder.Services.AddProblemDetails();
 builder.Services.AddRazorPages();
+builder.Services.AddHealthChecks()
+    .AddCheck<DatabaseReadinessHealthCheck>("postgresql", tags: ["ready"]);
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -155,6 +161,9 @@ var app = builder.Build();
 _ = app.Services.GetRequiredService<ISecretProtector>();
 _ = app.Services.GetRequiredService<Argon2PasswordService>();
 
+await DatabaseStartup.ApplyMigrationsAsync(app.Services, app.Configuration, app.Lifetime.ApplicationStopping);
+app.UseForwardedHeaders();
+app.UseMiddleware<RequestIdMiddleware>();
 app.UseExceptionHandler();
 app.UseRateLimiter();
 app.UseAuthentication();
@@ -163,6 +172,7 @@ app.MapAuthEndpoints();
 app.MapAdminEndpoints();
 app.MapDeviceEndpoints();
 app.MapSyncEndpoints();
+app.MapMtPlayerHealthChecks();
 app.MapRazorPages();
 app.Run();
 

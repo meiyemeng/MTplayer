@@ -12,9 +12,21 @@ public static class AdminEndpoints
         var group = routes.MapGroup("/api/v1/admin")
             .RequireAuthorization(AdminAuthentication.ApiPolicy);
         group.MapGet("/settings", GetSettingsAsync);
+        group.MapGet("/client-config", GetClientConfig);
         group.MapPut("/settings", UpdateSettingsAsync);
         group.MapPost("/email/test", SendTestEmailAsync).RequireRateLimiting("email-token");
         return routes;
+    }
+
+    private static IResult GetClientConfig(HttpContext context)
+    {
+        var baseUrl = $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}";
+        return Results.Ok(new
+        {
+            apiBaseUrl = baseUrl.TrimEnd('/'),
+            accountApiVersion = "v1",
+            syncEnabled = true,
+        });
     }
 
     private static Task<AdminSettingsView> GetSettingsAsync(

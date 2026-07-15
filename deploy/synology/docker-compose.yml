@@ -1,0 +1,85 @@
+name: mtplayer
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mtplayer
+      POSTGRES_USER: mtplayer
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?请在 .env 中填写 DATABASE_PASSWORD}
+    volumes:
+      - mtplayer-postgres:/var/lib/postgresql/data
+    networks:
+      - mtplayer
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mtplayer -d mtplayer"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+
+  mt-api:
+    build:
+      context: ../..
+      dockerfile: deploy/synology/Dockerfile
+    image: mtplayer/server:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__PostgreSQL: Host=postgres;Port=5432;Database=mtplayer;Username=mtplayer;Password=${DATABASE_PASSWORD}
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:?请在 .env 中填写 DATA_ENCRYPTION_KEY}
+      ADMIN_SETUP_TOKEN: ${ADMIN_SETUP_TOKEN:?请在 .env 中填写 ADMIN_SETUP_TOKEN}
+      AllowedHosts: localhost;127.0.0.1;${ALLOWED_HOSTS:-*}
+      Database__MigrateOnStartup: "true"
+      ForwardedHeaders__ForwardLimit: "1"
+      ForwardedHeaders__KnownNetworks__0: ${FORWARDED_NETWORK:-172.16.0.0/12}
+    expose:
+      - "8080"
+    volumes:
+      - mtplayer-data-protection:/home/app/.aspnet/DataProtection-Keys
+    networks:
+      - mtplayer
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+
+  mt-api-nas-port:
+    image: alpine/socat:1.8.0.1
+    profiles: ["nas-port"]
+    restart: unless-stopped
+    depends_on:
+      mt-api:
+        condition: service_healthy
+    command: ["TCP-LISTEN:8080,fork,reuseaddr", "TCP:mt-api:8080"]
+    ports:
+      - "${MT_API_BIND_ADDRESS:-127.0.0.1}:${MT_API_BIND_PORT:-8888}:8080"
+    networks:
+      - mtplayer
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  mtplayer:
+    name: mtplayer
+
+volumes:
+  mtplayer-postgres:
+    name: mtplayer-postgres
+  mtplayer-data-protection:
+    name: mtplayer-data-protection
