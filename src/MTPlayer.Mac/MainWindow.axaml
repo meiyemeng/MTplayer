@@ -1,0 +1,28 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="MTPlayer.Mac.MainWindow"
+        Title="MT播放器" Width="1440" Height="900" MinWidth="1080" MinHeight="700"
+        WindowStartupLocation="CenterScreen">
+  <Grid ColumnDefinitions="260,*">
+    <Border Grid.Column="0" Background="#151920" Padding="22">
+      <Grid RowDefinitions="120,*,Auto">
+        <Image Source="avares://MTPlayer/Assets/logo-header-transparent.png" Stretch="Uniform" Margin="0,0,0,20"/>
+        <ScrollViewer Grid.Row="1">
+          <StackPanel Spacing="8">
+            <Button Content="⌂  首页" Click="Home_Click" HorizontalContentAlignment="Left"/>
+            <Button Content="⌕  搜索" Click="Search_Click" HorizontalContentAlignment="Left"/>
+            <Button Content="♡  我的收藏" Click="Favorites_Click" HorizontalContentAlignment="Left"/>
+            <Button Content="◷  观看记录" Click="History_Click" HorizontalContentAlignment="Left"/>
+            <Button Content="●  直播频道" Click="Live_Click" HorizontalContentAlignment="Left"/>
+            <Separator Margin="0,8"/>
+            <Button Content="♙  账户与同步" Click="Account_Click" HorizontalContentAlignment="Left"/>
+            <Button Content="⚙  设置" Click="Settings_Click" HorizontalContentAlignment="Left"/>
+            <Button Content="ⓘ  关于软件" Click="About_Click" HorizontalContentAlignment="Left"/>
+          </StackPanel>
+        </ScrollViewer>
+        <TextBlock Grid.Row="2" Text="本地数据 · 不预置内容源" Foreground="#68717D" FontSize="12"/>
+      </Grid>
+    </Border>
+    <ContentControl x:Name="PageHost" Grid.Column="1"/>
+  </Grid>
+</Window>

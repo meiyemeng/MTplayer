@@ -1,0 +1,13 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="MTPlayer.Mac.App"
+             RequestedThemeVariant="Dark">
+  <Application.Styles>
+    <FluentTheme />
+    <Style Selector="Window"><Setter Property="Background" Value="#090C10"/><Setter Property="FontFamily" Value="Inter, PingFang SC, Microsoft YaHei"/></Style>
+    <Style Selector="Button"><Setter Property="MinHeight" Value="44"/><Setter Property="Padding" Value="18,10"/><Setter Property="CornerRadius" Value="10"/><Setter Property="FontSize" Value="15"/></Style>
+    <Style Selector="Button.primary"><Setter Property="Background" Value="#F0192D"/><Setter Property="Foreground" Value="White"/></Style>
+    <Style Selector="TextBox"><Setter Property="MinHeight" Value="46"/><Setter Property="CornerRadius" Value="8"/><Setter Property="Background" Value="#20252D"/><Setter Property="BorderBrush" Value="#343B47"/></Style>
+    <Style Selector="ComboBox"><Setter Property="MinHeight" Value="46"/><Setter Property="CornerRadius" Value="8"/><Setter Property="Background" Value="#20252D"/></Style>
+  </Application.Styles>
+</Application>

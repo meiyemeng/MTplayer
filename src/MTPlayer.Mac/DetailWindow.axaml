@@ -1,0 +1,37 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="MTPlayer.Mac.DetailWindow"
+        Title="MT播放器 · 影片详情" Width="1180" Height="780" MinWidth="900" MinHeight="620"
+        WindowStartupLocation="CenterOwner">
+  <ScrollViewer>
+    <Grid Margin="34" ColumnDefinitions="280,*" ColumnSpacing="32">
+      <Border Background="#151920" CornerRadius="14" Height="410" VerticalAlignment="Top">
+        <Image x:Name="Poster" Stretch="UniformToFill"/>
+      </Border>
+      <StackPanel Grid.Column="1" Spacing="14">
+        <TextBlock x:Name="TypeText" Foreground="#F0192D" FontSize="15"/>
+        <TextBlock x:Name="TitleText" Foreground="White" FontSize="36" FontWeight="Bold" TextWrapping="Wrap"/>
+        <TextBlock x:Name="MetaText" Foreground="#A7AFBA" FontSize="16" TextWrapping="Wrap"/>
+        <TextBlock x:Name="PeopleText" Foreground="#D5D9DF" FontSize="14" TextWrapping="Wrap"/>
+        <TextBlock x:Name="ContentText" Foreground="#D5D9DF" FontSize="15" TextWrapping="Wrap" MaxHeight="145"/>
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <Button x:Name="PlayButton" Content="▶ 播放所选集" Classes="primary"/>
+          <Button x:Name="FavoriteButton" Content="♡ 加入收藏"/>
+        </StackPanel>
+        <Separator Margin="0,10"/>
+        <Grid ColumnDefinitions="Auto,260,26,Auto,260" VerticalAlignment="Center">
+          <TextBlock Text="播放接口" Foreground="White" FontWeight="Bold" VerticalAlignment="Center"/>
+          <ComboBox x:Name="InterfaceBox" Grid.Column="1"/>
+          <TextBlock Grid.Column="3" Text="播放线路" Foreground="White" FontWeight="Bold" VerticalAlignment="Center"/>
+          <ComboBox x:Name="LineBox" Grid.Column="4"/>
+        </Grid>
+        <TextBlock Text="选择剧集" Foreground="White" FontSize="22" FontWeight="Bold" Margin="0,10,0,0"/>
+        <Border Background="#11151B" BorderBrush="#2B313B" BorderThickness="1" CornerRadius="12" Padding="14" Height="230">
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <WrapPanel x:Name="EpisodesPanel" ItemWidth="128" ItemHeight="54"/>
+          </ScrollViewer>
+        </Border>
+      </StackPanel>
+    </Grid>
+  </ScrollViewer>
+</Window>
