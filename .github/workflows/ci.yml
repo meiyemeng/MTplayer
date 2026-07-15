@@ -6,14 +6,22 @@ on:
   pull_request:
 
 jobs:
-  dotnet:
-    runs-on: windows-latest
+  server-tests:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.422
       - run: dotnet test tests/MTPlayer.Server.Tests/MTPlayer.Server.Tests.csproj -c Release
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.422
       - run: dotnet test tests/MTPlayer.Client.Core.Tests/MTPlayer.Client.Core.Tests.csproj -c Release
       - run: dotnet build src/WebHtv.Desktop/WebHtv.Desktop.csproj -c Release -r win-x64 -p:Platform=x64
 
