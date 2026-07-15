@@ -15,6 +15,8 @@ public sealed class ClientSettings
     public List<ConfigurationGroupRecord> ConfigurationGroups { get; set; } = [];
     public List<CustomLiveSourceRecord> CustomLiveSources { get; set; } = [];
     public string PosterDensity { get; set; } = "standard";
+    public string ServerUrl { get; set; } = string.Empty;
+    public Guid DeviceId { get; set; }
     public long SyncCursor { get; set; }
     public Dictionary<string, PreferenceSyncState> PreferenceStates { get; set; } = new(StringComparer.Ordinal);
 }

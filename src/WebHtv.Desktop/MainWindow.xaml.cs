@@ -56,6 +56,11 @@ public partial class MainWindow : Window
     {
         if (sender is not Button { Tag: string page }) return;
         if (page == "search") { ShowPage("home"); SearchBox.Focus(); return; }
+        if (page == "account")
+        {
+            new AccountWindow { Owner = this }.ShowDialog();
+            return;
+        }
         if (page == "home") _viewModel.ShowHomeTopLists();
         ShowPage(page);
         if (page == "favorites") { LibraryTitle.Text = "我的收藏"; LibrarySubtitle.Text = "收藏的影片保存在本机。"; await _viewModel.LoadFavoritesAsync(); }

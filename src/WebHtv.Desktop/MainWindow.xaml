@@ -47,6 +47,7 @@
         </StackPanel>
         <StackPanel DockPanel.Dock="Bottom" Margin="0,0,14,20">
           <Separator Margin="20,0,6,12" Background="#33363B"/>
+          <Button Style="{StaticResource NavButton}" Tag="account" Content="♙  账户与同步" Click="Navigation_Click"/>
           <Button Style="{StaticResource NavButton}" Tag="settings" Content="⚙  设置" Click="Navigation_Click"/>
           <Button Style="{StaticResource NavButton}" Tag="about" Content="ⓘ  关于软件" Click="Navigation_Click"/>
           <TextBlock Margin="28,10" Foreground="#6F737A" FontSize="11" Text="本地数据 · 不预置内容"/>

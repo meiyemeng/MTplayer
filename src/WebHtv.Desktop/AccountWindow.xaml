@@ -1,0 +1,58 @@
+<Window x:Class="WebHtv.Desktop.AccountWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="MT播放器 · 账户与同步" Width="760" Height="720" MinWidth="680" MinHeight="620"
+        WindowStartupLocation="CenterOwner" Background="#090B0F" FontFamily="Microsoft YaHei UI"
+        Loaded="Window_Loaded" Closed="Window_Closed">
+  <Window.Resources>
+    <Style TargetType="TextBox">
+      <Setter Property="Foreground" Value="White"/><Setter Property="Background" Value="#11151B"/><Setter Property="BorderBrush" Value="#303640"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="13,11"/><Setter Property="CaretBrush" Value="White"/>
+    </Style>
+    <Style TargetType="PasswordBox">
+      <Setter Property="Foreground" Value="White"/><Setter Property="Background" Value="#11151B"/><Setter Property="BorderBrush" Value="#303640"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="13,11"/><Setter Property="CaretBrush" Value="White"/>
+    </Style>
+    <Style x:Key="PrimaryButton" TargetType="Button">
+      <Setter Property="Foreground" Value="White"/><Setter Property="Background" Value="#EF2435"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Padding" Value="18,11"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="Chrome" Background="{TemplateBinding Background}" CornerRadius="9" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#FF4050"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Opacity" Value="0.42"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}"><Setter Property="Background" Value="#242A33"/><Setter Property="FontWeight" Value="Normal"/></Style>
+    <Style x:Key="Card" TargetType="Border"><Setter Property="Background" Value="#11151B"/><Setter Property="BorderBrush" Value="#252B34"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="14"/><Setter Property="Padding" Value="22"/><Setter Property="Margin" Value="0,0,0,16"/></Style>
+  </Window.Resources>
+  <Grid>
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <Border Padding="30,24" BorderBrush="#242A32" BorderThickness="0,0,0,1">
+      <DockPanel>
+        <Border DockPanel.Dock="Left" Width="48" Height="48" CornerRadius="12" Margin="0,0,14,0"><Image Source="Assets/mtplayer-icon.png" Stretch="Uniform"/></Border>
+        <StackPanel><TextBlock Foreground="#FF3344" FontFamily="Consolas" FontSize="11" Text="MT ACCOUNT"/><TextBlock Foreground="White" FontSize="26" FontWeight="Bold" Text="账户与同步"/><TextBlock Foreground="#8D96A4" Margin="0,5,0,0" Text="游客可本地播放；登录后同步收藏、记录和设置。"/></StackPanel>
+      </DockPanel>
+    </Border>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+      <StackPanel Margin="30,24,30,34">
+        <Border Style="{StaticResource Card}">
+          <StackPanel>
+            <DockPanel><TextBlock Foreground="White" FontSize="18" FontWeight="SemiBold" Text="同步服务器"/><TextBlock x:Name="BindingStateText" DockPanel.Dock="Right" Foreground="#F5B95F" Text="未绑定"/></DockPanel>
+            <TextBlock Foreground="#858E9C" Margin="0,7,0,13" Text="填写后台公开 HTTPS 地址，不填写群晖内网端口。"/>
+            <TextBox x:Name="ServerUrlText" ToolTip="例如 https://api.example.com"/>
+            <Button Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Margin="0,13,0,0" Content="保存并连接" Click="BindServer_Click"/>
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource Card}">
+          <StackPanel>
+            <TextBlock Foreground="White" FontSize="18" FontWeight="SemiBold" Text="登录或注册"/>
+            <TextBlock Foreground="#858E9C" Margin="0,7,0,13" Text="首次使用可直接注册；如后台开启邮箱验证，请先打开验证邮件。"/>
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><StackPanel Margin="0,0,8,0"><TextBlock Foreground="#BFC5CE" Margin="0,0,0,6" Text="邮箱"/><TextBox x:Name="EmailText"/></StackPanel><StackPanel Grid.Column="1" Margin="8,0,0,0"><TextBlock Foreground="#BFC5CE" Margin="0,0,0,6" Text="密码"/><PasswordBox x:Name="PasswordText"/></StackPanel></Grid>
+            <StackPanel Orientation="Horizontal" Margin="0,15,0,0"><Button x:Name="LoginButton" Style="{StaticResource PrimaryButton}" Content="登录并同步" Click="Login_Click"/><Button x:Name="RegisterButton" Style="{StaticResource SecondaryButton}" Margin="10,0,0,0" Content="创建账号" Click="Register_Click"/></StackPanel>
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource Card}">
+          <StackPanel>
+            <DockPanel><StackPanel><TextBlock Foreground="White" FontSize="18" FontWeight="SemiBold" Text="同步状态"/><TextBlock x:Name="AccountStateText" Foreground="#858E9C" Margin="0,6,0,0" Text="当前为游客模式"/></StackPanel><Border DockPanel.Dock="Right" Background="#16231E" BorderBrush="#28533F" BorderThickness="1" CornerRadius="12" Padding="11,6"><TextBlock x:Name="SyncBadgeText" Foreground="#66DDA6" Text="本地可用"/></Border></DockPanel>
+            <TextBlock x:Name="StatusText" Foreground="#AEB5C0" TextWrapping="Wrap" Margin="0,16,0,0" Text="绑定服务器后可登录。"/>
+            <StackPanel Orientation="Horizontal" Margin="0,15,0,0"><Button x:Name="SyncButton" Style="{StaticResource PrimaryButton}" Content="立即同步" Click="Sync_Click" IsEnabled="False"/><Button x:Name="LogoutButton" Style="{StaticResource SecondaryButton}" Margin="10,0,0,0" Content="退出账号" Click="Logout_Click" IsEnabled="False"/></StackPanel>
+          </StackPanel>
+        </Border>
+        <TextBlock Foreground="#666F7D" TextWrapping="Wrap" Text="隐私说明：服务器只保存账号、收藏、观看进度和设置，不接收、缓存或代理任何影视流。退出账号不会删除本地数据。"/>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</Window>
