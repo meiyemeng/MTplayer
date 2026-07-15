@@ -30,6 +30,15 @@ docker compose up -d --build
 docker compose ps
 ```
 
+若使用 GitHub Release 中已经导出的镜像 TAR，无需在群晖重新编译源码：
+
+```sh
+docker load -i mtplayer-server-1.0.1-linux-amd64.tar
+cp env.release.example .env
+# 编辑 .env 中的三个随机密钥
+docker compose -f docker-compose.release.yml up -d
+```
+
 默认不会映射任何宿主机端口。PostgreSQL 也只在 `mtplayer` Docker 网络内可见。首次启动会自动执行数据库迁移。
 
 ## 3. 连接现有 Cloudflare Tunnel
