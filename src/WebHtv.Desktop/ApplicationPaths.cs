@@ -16,6 +16,8 @@ internal static class ApplicationPaths
 
     public static string SettingsFilePath { get; } = Path.Combine(ApplicationDataDirectory, "settings.json");
 
+    public static string AccountTokenFilePath { get; } = Path.Combine(ApplicationDataDirectory, "account-token.bin");
+
     private static string ResolveApplicationDataDirectory()
     {
         if (Environment.GetEnvironmentVariable("WEBHTV_DATA_DIRECTORY") is { Length: > 0 } overrideDirectory)
