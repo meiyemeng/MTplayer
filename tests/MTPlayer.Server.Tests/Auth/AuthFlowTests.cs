@@ -48,14 +48,16 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
         Assert.True(await fixture.IsJwtAcceptedAsync(pair.AccessToken), fixture.LastAuthenticationFailure);
         Assert.Equal(HttpStatusCode.OK, await fixture.AuthorizeWithDefaultPolicyAsync(pair.AccessToken));
         Assert.True(await fixture.CanSyncAsync(pair.AccessToken));
+        var jwtPayload = ReadJwtPayload(pair.AccessToken);
+        var sessionId = Guid.Parse(jwtPayload.GetProperty("sid").GetString()!);
         await using (var db = fixture.CreateDbContext())
         {
             var refreshHash = new TokenFactory().HashToken(pair.RefreshToken);
-            var refreshExpiry = await db.DeviceSessions
+            var session = await db.DeviceSessions
                 .Where(session => session.RefreshTokenHash == refreshHash)
-                .Select(session => session.ExpiresAtUtc)
                 .SingleAsync();
-            Assert.InRange(refreshExpiry, DateTimeOffset.UtcNow.AddDays(29), DateTimeOffset.UtcNow.AddDays(31));
+            Assert.Equal(sessionId, session.Id);
+            Assert.InRange(session.ExpiresAtUtc, DateTimeOffset.UtcNow.AddDays(29), DateTimeOffset.UtcNow.AddDays(31));
         }
 
         var firstRefresh = await fixture.Client.PostAsJsonAsync(
@@ -73,6 +75,7 @@ public sealed class AuthFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
             "/api/v1/auth/refresh",
             new RefreshRequest(pair.RefreshToken));
         Assert.Equal(HttpStatusCode.Unauthorized, reuse.StatusCode);
+        Assert.False(await fixture.IsJwtAcceptedAsync(rotated.AccessToken));
         var familyRevoked = await fixture.Client.PostAsJsonAsync(
             "/api/v1/auth/refresh",
             new RefreshRequest(rotated.RefreshToken));
@@ -843,6 +846,9 @@ public sealed class PostgreSqlAuthFixture : IAsyncLifetime
                 builder.UseSetting("RateLimiting:login:PermitLimit", "1000");
                 builder.UseSetting("RateLimiting:refresh:PermitLimit", "1000");
                 builder.UseSetting("RateLimiting:email-token:PermitLimit", "1000");
+                builder.UseSetting("RateLimiting:device-code:PermitLimit", "1000");
+                builder.UseSetting("RateLimiting:device-poll:PermitLimit", "1000");
+                builder.UseSetting("RateLimiting:device-approve:PermitLimit", "1000");
             }
 
             builder.ConfigureLogging(logging => logging.AddProvider(Logs));

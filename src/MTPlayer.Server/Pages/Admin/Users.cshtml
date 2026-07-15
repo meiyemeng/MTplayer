@@ -1,0 +1,49 @@
+@page "/admin/users"
+@model MTPlayer.Server.Pages.Admin.UsersModel
+@{
+    Layout = null;
+}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>用户管理 - MT播放器</title>
+</head>
+<body>
+<main>
+    <nav><a href="/admin/settings">系统设置</a> · <strong>用户管理</strong></nav>
+    <h1>用户与设备</h1>
+    @if (!string.IsNullOrEmpty(Model.StatusMessage)) { <p role="status">@Model.StatusMessage</p> }
+    <table>
+        <thead><tr><th>邮箱</th><th>角色</th><th>邮箱验证</th><th>状态</th><th>活跃设备</th><th>操作</th></tr></thead>
+        <tbody>
+        @foreach (var user in Model.Users)
+        {
+            <tr>
+                <td>@user.Email</td>
+                <td>@user.Role</td>
+                <td>@(user.EmailVerified ? "已验证" : "未验证")</td>
+                <td>@(user.Disabled ? "已禁用" : "正常")</td>
+                <td>@user.ActiveDeviceCount</td>
+                <td>
+                    <form method="post" style="display:inline">
+                        <input type="hidden" name="userId" value="@user.Id" />
+                        @if (user.Disabled)
+                        {
+                            <button asp-page-handler="Enable" type="submit">启用</button>
+                        }
+                        else
+                        {
+                            <button asp-page-handler="Disable" type="submit">禁用</button>
+                        }
+                        <button asp-page-handler="RevokeAll" type="submit">撤销全部设备</button>
+                    </form>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</main>
+</body>
+</html>

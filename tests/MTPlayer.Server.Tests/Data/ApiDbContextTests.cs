@@ -22,12 +22,13 @@ public sealed class ApiDbContextTests
     }
 
     [Fact]
-    public void Context_exposes_business_tables_including_refresh_replay_history()
+    public void Context_exposes_business_tables_including_refresh_replay_and_device_codes()
     {
         using var db = TestDb.CreateContext();
 
         Assert.NotNull(db.Users);
         Assert.NotNull(db.DeviceSessions);
+        Assert.NotNull(db.DeviceCodes);
         Assert.NotNull(db.ConsumedRefreshTokens);
         Assert.NotNull(db.SyncRecords);
         Assert.NotNull(db.ChangeLog);
@@ -94,6 +95,8 @@ public sealed class ApiDbContextTests
         using var db = TestDb.CreateContext();
 
         AssertIndex(db, typeof(DeviceSessionEntity), nameof(DeviceSessionEntity.RefreshTokenHash));
+        AssertIndex(db, typeof(DeviceCodeEntity), nameof(DeviceCodeEntity.DeviceCodeHash));
+        AssertIndex(db, typeof(DeviceCodeEntity), nameof(DeviceCodeEntity.UserCodeHash));
         AssertIndex(db, typeof(ChangeLogEntity), nameof(ChangeLogEntity.UserId), nameof(ChangeLogEntity.Cursor));
         AssertIndex(
             db,
@@ -222,6 +225,30 @@ public sealed class ApiDbContextTests
         Assert.Equal("consumed_refresh_tokens", operation.Name);
         Assert.Contains(operation.Columns, column => column.Name == nameof(ConsumedRefreshTokenEntity.TokenHash));
         Assert.Contains(operation.Columns, column => column.Name == nameof(ConsumedRefreshTokenEntity.SessionId));
+    }
+
+    [Fact]
+    public void Device_code_migration_stores_only_hashes_with_unique_indexes()
+    {
+        using var db = TestDb.CreateContext();
+        var migrations = db.GetService<IMigrationsAssembly>();
+        var migrationId = Assert.Single(
+            migrations.Migrations.Keys,
+            id => id.EndsWith("_AddDeviceCodes", StringComparison.Ordinal));
+        var migration = migrations.CreateMigration(
+            migrations.Migrations[migrationId],
+            db.Database.ProviderName!);
+
+        var table = Assert.Single(migration.UpOperations.OfType<CreateTableOperation>());
+        Assert.Equal("device_codes", table.Name);
+        Assert.Contains(table.Columns, column => column.Name == nameof(DeviceCodeEntity.DeviceCodeHash));
+        Assert.Contains(table.Columns, column => column.Name == nameof(DeviceCodeEntity.UserCodeHash));
+        Assert.DoesNotContain(table.Columns, column => column.Name is "DeviceCode" or "UserCode");
+        var indexes = migration.UpOperations.OfType<CreateIndexOperation>().ToArray();
+        Assert.Contains(indexes, index =>
+            index.IsUnique && index.Columns.SequenceEqual([nameof(DeviceCodeEntity.DeviceCodeHash)]));
+        Assert.Contains(indexes, index =>
+            index.IsUnique && index.Columns.SequenceEqual([nameof(DeviceCodeEntity.UserCodeHash)]));
     }
 
     private static void AssertIndex(ApiDbContext db, Type entityType, params string[] propertyNames)

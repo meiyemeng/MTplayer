@@ -197,7 +197,7 @@ public sealed class AuthService(
                 {
                     var now = timeProvider.GetUtcNow();
                     var refreshToken = tokenFactory.CreateRefreshToken();
-                    db.DeviceSessions.Add(new DeviceSessionEntity
+                    var session = new DeviceSessionEntity
                     {
                         Id = Guid.NewGuid(),
                         UserId = user.Id,
@@ -207,10 +207,13 @@ public sealed class AuthService(
                         CreatedAtUtc = now,
                         LastActivityAtUtc = now,
                         ExpiresAtUtc = now.Add(JwtOptions.RefreshTokenLifetime),
-                    });
+                    };
+                    db.DeviceSessions.Add(session);
                     await db.SaveChangesAsync(cancellationToken);
                     await transaction.CommitAsync(cancellationToken);
-                    return new AuthResult(AuthStatus.Success, CreateTokenResponse(user, refreshToken, now));
+                    return new AuthResult(
+                        AuthStatus.Success,
+                        CreateTokenResponse(user, session.Id, refreshToken, now));
                 }
             }
 
@@ -333,7 +336,9 @@ public sealed class AuthService(
         session.ExpiresAtUtc = now.Add(JwtOptions.RefreshTokenLifetime);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return new AuthResult(AuthStatus.Success, CreateTokenResponse(user, newRefreshToken, now));
+        return new AuthResult(
+            AuthStatus.Success,
+            CreateTokenResponse(user, session.Id, newRefreshToken, now));
     }
 
     public async Task ForgotPasswordAsync(string emailInput, CancellationToken cancellationToken)
@@ -419,7 +424,11 @@ public sealed class AuthService(
         return AuthStatus.Success;
     }
 
-    private TokenResponse CreateTokenResponse(UserEntity user, string refreshToken, DateTimeOffset now)
+    internal TokenResponse CreateTokenResponse(
+        UserEntity user,
+        Guid sessionId,
+        string refreshToken,
+        DateTimeOffset now)
     {
         var expires = now.Add(JwtOptions.AccessTokenLifetime);
         var claims = new List<Claim>
@@ -427,6 +436,7 @@ public sealed class AuthService(
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString("D", CultureInfo.InvariantCulture)),
             new(JwtRegisteredClaimNames.Email, user.Email),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("D", CultureInfo.InvariantCulture)),
+            new("sid", sessionId.ToString("D", CultureInfo.InvariantCulture)),
             new("role", user.Role),
             new("email_verified", "true"),
             new("scope", "sync"),

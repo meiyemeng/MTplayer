@@ -73,7 +73,9 @@ public sealed class JwtOptions : IDisposable
     }
 }
 
-public sealed class ConfigureJwtBearerOptions(JwtOptions jwtOptions) : IConfigureNamedOptions<JwtBearerOptions>
+public sealed class ConfigureJwtBearerOptions(
+    JwtOptions jwtOptions,
+    TimeProvider timeProvider) : IConfigureNamedOptions<JwtBearerOptions>
 {
     public void Configure(JwtBearerOptions options) =>
         Configure(JwtBearerDefaults.AuthenticationScheme, options);
@@ -105,7 +107,9 @@ public sealed class ConfigureJwtBearerOptions(JwtOptions jwtOptions) : IConfigur
             OnTokenValidated = async context =>
             {
                 var subject = context.Principal?.FindFirst("sub")?.Value;
-                if (!Guid.TryParse(subject, out var userId))
+                var session = context.Principal?.FindFirst("sid")?.Value;
+                if (!Guid.TryParse(subject, out var userId) ||
+                    !Guid.TryParse(session, out var sessionId))
                 {
                     context.Fail("account_not_active");
                     return;
@@ -123,11 +127,20 @@ public sealed class ConfigureJwtBearerOptions(JwtOptions jwtOptions) : IConfigur
                     .SingleOrDefaultAsync(context.HttpContext.RequestAborted);
                 var requireVerifiedEmail = !bool.TryParse(requireVerifiedValue, out var parsedRequireVerified) ||
                     parsedRequireVerified;
+                var now = timeProvider.GetUtcNow();
+                var sessionActive = await db.DeviceSessions.AsNoTracking().AnyAsync(
+                    item =>
+                        item.Id == sessionId &&
+                        item.UserId == userId &&
+                        item.RevokedAtUtc == null &&
+                        item.ExpiresAtUtc > now,
+                    context.HttpContext.RequestAborted);
                 var active = tokenRole is not null &&
                     account is not null &&
                     !account.Disabled &&
                     account.Role == tokenRole &&
-                    (account.EmailVerified || !requireVerifiedEmail);
+                    (account.EmailVerified || !requireVerifiedEmail) &&
+                    sessionActive;
                 if (!active)
                 {
                     context.Fail("account_not_active");

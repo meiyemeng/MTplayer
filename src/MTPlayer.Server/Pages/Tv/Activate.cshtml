@@ -1,0 +1,22 @@
+@page "/tv/activate"
+@attribute [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+@{
+    Layout = null;
+    ViewContext.HttpContext.Response.Headers.CacheControl = "no-store";
+}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Cache-Control" content="no-store" />
+    <title>确认电视登录 - MT播放器</title>
+</head>
+<body>
+<main>
+    <h1>确认电视登录</h1>
+    <p>请在已登录的 MT播放器 手机端或桌面端打开“设备管理”，输入电视显示的 8 位确认码。</p>
+    <p>确认码有效期为 10 分钟。不要把确认码发送给其他人。</p>
+</main>
+</body>
+</html>

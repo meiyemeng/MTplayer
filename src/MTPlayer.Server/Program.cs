@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using MTPlayer.Server.Auth;
 using MTPlayer.Server.Admin;
 using MTPlayer.Server.Data;
+using MTPlayer.Server.Devices;
 using MTPlayer.Server.Mail;
 using MTPlayer.Server.Security;
 using MTPlayer.Server.Settings;
@@ -84,6 +85,7 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddScoped<IAuthorizationHandler, SyncAccessHandler>();
 builder.Services.AddScoped<CurrentUser>();
 builder.Services.AddScoped<AuthService>();
+builder.Services.AddScoped<DeviceService>();
 builder.Services.AddScoped<AdminAuthenticationService>();
 builder.Services.AddScoped<AdminCookieEvents>();
 builder.Services.AddSingleton<AdminSetupService>();
@@ -142,6 +144,9 @@ builder.Services.AddRateLimiter(options =>
     AddFixedWindowPolicy(options, builder.Configuration, "login", 10, TimeSpan.FromMinutes(1));
     AddFixedWindowPolicy(options, builder.Configuration, "refresh", 30, TimeSpan.FromMinutes(1));
     AddFixedWindowPolicy(options, builder.Configuration, "email-token", 5, TimeSpan.FromMinutes(10));
+    AddFixedWindowPolicy(options, builder.Configuration, "device-code", 10, TimeSpan.FromMinutes(10));
+    AddFixedWindowPolicy(options, builder.Configuration, "device-poll", 120, TimeSpan.FromMinutes(10));
+    AddFixedWindowPolicy(options, builder.Configuration, "device-approve", 20, TimeSpan.FromMinutes(10));
 });
 
 var app = builder.Build();
@@ -154,6 +159,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapAuthEndpoints();
 app.MapAdminEndpoints();
+app.MapDeviceEndpoints();
 app.MapRazorPages();
 app.Run();
 

@@ -78,6 +78,9 @@ public sealed class AdminSettingsTests(PostgreSqlAuthFixture fixture) : IClassFi
             AssertRedirectWithoutCaching(await browser.GetAsync("/admin"), "/admin/settings");
             var settingsPage = await browser.GetAsync("/admin/settings");
             Assert.Equal(HttpStatusCode.OK, settingsPage.StatusCode);
+            var usersPage = await browser.GetAsync("/admin/users");
+            Assert.Equal(HttpStatusCode.OK, usersPage.StatusCode);
+            Assert.Contains(ownerEmail, await usersPage.Content.ReadAsStringAsync(), StringComparison.Ordinal);
             Assert.Equal(HttpStatusCode.BadRequest, (await browser.PostAsync("/admin/logout", new FormUrlEncodedContent([]))).StatusCode);
             var logoutToken = ReadAntiforgeryToken(await settingsPage.Content.ReadAsStringAsync());
             Assert.Equal(

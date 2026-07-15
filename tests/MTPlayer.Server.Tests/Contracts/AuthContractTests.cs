@@ -57,7 +57,7 @@ public sealed class AuthContractTests
     }
 
     [Fact]
-    public void DeviceCodeResponse_ToString_does_not_include_device_code()
+    public void DeviceCodeResponse_ToString_does_not_include_secret_codes()
     {
         const string deviceCode = "device-code-secret";
         const string userCode = "ABCD-EFGH";
@@ -71,7 +71,7 @@ public sealed class AuthContractTests
         var text = value.ToString();
 
         Assert.DoesNotContain(deviceCode, text, StringComparison.Ordinal);
-        Assert.Contains(userCode, text, StringComparison.Ordinal);
+        Assert.DoesNotContain(userCode, text, StringComparison.Ordinal);
     }
 
     [Fact]

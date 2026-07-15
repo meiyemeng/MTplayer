@@ -34,5 +34,5 @@ public sealed record DeviceCodeResponse(
     int PollIntervalSeconds)
 {
     public override string ToString() =>
-        $"{nameof(DeviceCodeResponse)} {{ UserCode = {UserCode}, PollIntervalSeconds = {PollIntervalSeconds} }}";
+        $"{nameof(DeviceCodeResponse)} {{ PollIntervalSeconds = {PollIntervalSeconds} }}";
 }

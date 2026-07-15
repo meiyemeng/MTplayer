@@ -12,6 +12,7 @@
 </head>
 <body>
 <main>
+    <nav><strong>系统设置</strong> · <a href="/admin/users">用户管理</a></nav>
     <h1>系统设置</h1>
     @if (!string.IsNullOrEmpty(Model.StatusMessage)) { <p role="status">@Model.StatusMessage</p> }
     <form method="post">

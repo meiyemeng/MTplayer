@@ -39,6 +39,27 @@ internal sealed class DeviceSessionEntityConfiguration : IEntityTypeConfiguratio
     }
 }
 
+internal sealed class DeviceCodeEntityConfiguration : IEntityTypeConfiguration<DeviceCodeEntity>
+{
+    public void Configure(EntityTypeBuilder<DeviceCodeEntity> builder)
+    {
+        builder.ToTable("device_codes");
+        builder.HasKey(code => code.Id);
+        builder.Property(code => code.DeviceCodeHash).HasMaxLength(64);
+        builder.Property(code => code.UserCodeHash).HasMaxLength(64);
+        builder.Property(code => code.DeviceName).HasMaxLength(200);
+        builder.Property(code => code.Platform).HasMaxLength(50);
+        builder.Property(code => code.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
+        builder.HasIndex(code => code.DeviceCodeHash).IsUnique();
+        builder.HasIndex(code => code.UserCodeHash).IsUnique();
+        builder.HasIndex(code => code.ExpiresAtUtc);
+        builder.HasOne(code => code.ApprovedUser)
+            .WithMany()
+            .HasForeignKey(code => code.ApprovedUserId)
+            .OnDelete(DeleteBehavior.SetNull);
+    }
+}
+
 internal sealed class SyncRecordEntityConfiguration : IEntityTypeConfiguration<SyncRecordEntity>
 {
     public void Configure(EntityTypeBuilder<SyncRecordEntity> builder)

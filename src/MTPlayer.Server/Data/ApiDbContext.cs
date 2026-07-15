@@ -8,6 +8,8 @@ public sealed class ApiDbContext(DbContextOptions<ApiDbContext> options) : DbCon
 
     public DbSet<DeviceSessionEntity> DeviceSessions => Set<DeviceSessionEntity>();
 
+    public DbSet<DeviceCodeEntity> DeviceCodes => Set<DeviceCodeEntity>();
+
     public DbSet<ConsumedRefreshTokenEntity> ConsumedRefreshTokens => Set<ConsumedRefreshTokenEntity>();
 
     public DbSet<SyncRecordEntity> SyncRecords => Set<SyncRecordEntity>();

@@ -147,6 +147,24 @@ public sealed class SystemSettingsService(
         return ReadSnapshot(values);
     }
 
+    public async Task<string?> GetPublicBaseUrlAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var setting = await db.SystemSettings.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Key == PublicBaseUrlKey, cancellationToken);
+        if (setting is null || string.IsNullOrEmpty(setting.Value))
+        {
+            return null;
+        }
+
+        if (!setting.IsEncrypted)
+        {
+            throw new InvalidOperationException($"Sensitive setting '{PublicBaseUrlKey}' is not encrypted.");
+        }
+
+        return secretProtector.Unprotect(setting.Value);
+    }
+
     public async Task UpdateAsync(AdminSettingsUpdate update, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(update);

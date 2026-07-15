@@ -46,6 +46,33 @@ public sealed class DeviceSessionEntity
     public UserEntity? User { get; set; }
 }
 
+public sealed class DeviceCodeEntity
+{
+    public Guid Id { get; set; }
+
+    public required string DeviceCodeHash { get; set; }
+
+    public required string UserCodeHash { get; set; }
+
+    public required string DeviceName { get; set; }
+
+    public string Platform { get; set; } = "android-tv";
+
+    public DateTimeOffset CreatedAtUtc { get; set; }
+
+    public DateTimeOffset ExpiresAtUtc { get; set; }
+
+    public DateTimeOffset? LastPolledAtUtc { get; set; }
+
+    public Guid? ApprovedUserId { get; set; }
+
+    public DateTimeOffset? ApprovedAtUtc { get; set; }
+
+    public DateTimeOffset? ConsumedAtUtc { get; set; }
+
+    public UserEntity? ApprovedUser { get; set; }
+}
+
 public sealed class ConsumedRefreshTokenEntity
 {
     // Expired replay history is intentionally retained here; Task 9 maintenance owns pruning it.
