@@ -1,5 +1,4 @@
-using System.Text.Json;
-using System.IO;
+using MTPlayer.Client.Core.Library;
 
 namespace WebHtv.Desktop;
 
@@ -34,107 +33,138 @@ internal sealed class LibraryDocument
     public List<SkipMarker> SkipMarkers { get; set; } = [];
 }
 
-internal sealed class LibraryStore(string filePath) : IDisposable
+internal sealed class LibraryStore : IDisposable
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly string _filePath = filePath;
+    private readonly JsonLibraryStore _store;
+
+    public LibraryStore(string filePath)
+    {
+        _store = new JsonLibraryStore(filePath);
+    }
 
     public async Task<LibraryDocument> LoadAsync(CancellationToken cancellationToken = default)
     {
-        await _gate.WaitAsync(cancellationToken);
-        try { return await LoadCoreAsync(cancellationToken); }
-        finally { _gate.Release(); }
-    }
-
-    public async Task<bool> ToggleFavoriteAsync(PosterCard card, CancellationToken cancellationToken = default)
-    {
-        await _gate.WaitAsync(cancellationToken);
-        try
+        var library = await _store.LoadAsync(cancellationToken);
+        return new LibraryDocument
         {
-            var document = await LoadCoreAsync(cancellationToken);
-            var existing = document.Favorites.FindIndex(item => item.SourceKey == card.SourceKey && item.Id == card.Id);
-            if (existing >= 0) document.Favorites.RemoveAt(existing);
-            else document.Favorites.Insert(0, new FavoriteEntry(card.SourceKey, card.Id, card.Category, card.Title, card.Caption, card.CoverUrl, DateTimeOffset.UtcNow));
-            await SaveCoreAsync(document, cancellationToken);
-            return existing < 0;
-        }
-        finally { _gate.Release(); }
+            Favorites = library.Favorites.Where(item => !item.IsDeleted).Select(item => new FavoriteEntry(
+                item.SourceKey,
+                item.ContentId,
+                item.Category,
+                item.Title,
+                item.Caption,
+                item.CoverUrl,
+                item.ModifiedAtUtc)).ToList(),
+            History = library.PlaybackHistory.Where(item => !item.IsDeleted).Select(item => new HistoryEntry(
+                item.SourceKey,
+                item.ContentId,
+                item.Category,
+                item.Title,
+                item.Caption,
+                item.CoverUrl,
+                item.SourceIndex,
+                item.EpisodeIndex,
+                item.PositionMs,
+                item.DurationMs,
+                item.WatchedAtUtc)).ToList(),
+        };
     }
 
-    public async Task SaveHistoryAsync(PosterCard card, int sourceIndex, int episodeIndex, long positionMs, long durationMs, CancellationToken cancellationToken = default)
-    {
-        await _gate.WaitAsync(cancellationToken);
-        try
+    public Task<bool> ToggleFavoriteAsync(PosterCard card, CancellationToken cancellationToken = default) =>
+        _store.ToggleFavoriteAsync(new FavoriteRecord(
+            JsonLibraryStore.StableId("favorite", card.SourceKey, card.Id),
+            card.SourceKey,
+            card.Id,
+            card.Category,
+            card.Title,
+            card.Caption,
+            card.CoverUrl,
+            DateTimeOffset.UtcNow), cancellationToken);
+
+    public Task SaveHistoryAsync(
+        PosterCard card,
+        int sourceIndex,
+        int episodeIndex,
+        long positionMs,
+        long durationMs,
+        CancellationToken cancellationToken = default) =>
+        _store.SavePlaybackAsync(new PlaybackRecord(
+            JsonLibraryStore.StableId("playback", card.SourceKey, card.Id),
+            card.SourceKey,
+            card.Id,
+            card.SourceKey,
+            $"source-index:{Math.Max(0, sourceIndex)}",
+            Math.Max(0, episodeIndex),
+            Math.Max(0, positionMs),
+            Math.Max(0, durationMs),
+            DateTimeOffset.UtcNow)
         {
-            var document = await LoadCoreAsync(cancellationToken);
-            document.History.RemoveAll(item => item.SourceKey == card.SourceKey && item.Id == card.Id);
-            document.History.Insert(0, new HistoryEntry(card.SourceKey, card.Id, card.Category, card.Title, card.Caption, card.CoverUrl, sourceIndex, episodeIndex, Math.Max(0, positionMs), Math.Max(0, durationMs), DateTimeOffset.UtcNow));
-            if (document.History.Count > 200) document.History.RemoveRange(200, document.History.Count - 200);
-            await SaveCoreAsync(document, cancellationToken);
-        }
-        finally { _gate.Release(); }
-    }
+            SourceIndex = Math.Max(0, sourceIndex),
+            Category = card.Category,
+            Title = card.Title,
+            Caption = card.Caption,
+            CoverUrl = card.CoverUrl,
+        }, cancellationToken: cancellationToken);
 
-    public async Task ClearHistoryAsync(CancellationToken cancellationToken = default)
+    public Task ClearHistoryAsync(CancellationToken cancellationToken = default) =>
+        _store.ClearPlaybackHistoryAsync(cancellationToken);
+
+    public async Task<SkipMarker?> GetSkipMarkerAsync(
+        string sourceKey,
+        string id,
+        string lineName,
+        CancellationToken cancellationToken = default)
     {
-        await _gate.WaitAsync(cancellationToken);
-        try
+        var library = await _store.LoadAsync(cancellationToken);
+        var marker = library.SkipMarkers
+            .Where(item => !item.IsDeleted && item.SourceKey == sourceKey && item.ContentId == id)
+            .OrderByDescending(item => item.LineName == lineName)
+            .ThenByDescending(item => item.ModifiedAtUtc)
+            .FirstOrDefault();
+        if (marker is null)
         {
-            var document = await LoadCoreAsync(cancellationToken);
-            document.History.Clear();
-            await SaveCoreAsync(document, cancellationToken);
+            return null;
         }
-        finally { _gate.Release(); }
+
+        var duration = library.PlaybackHistory
+            .Where(item => !item.IsDeleted && item.SourceKey == sourceKey && item.ContentId == id)
+            .OrderByDescending(item => item.WatchedAtUtc)
+            .Select(item => item.DurationMs)
+            .FirstOrDefault();
+        var outroStart = marker.OutroRemainingSeconds > 0 && duration > 0
+            ? Math.Max(0, duration - marker.OutroRemainingSeconds * 1000L)
+            : 0;
+        return new SkipMarker(sourceKey, id, marker.IntroEndSeconds * 1000L, outroStart);
     }
 
-    public async Task<SkipMarker?> GetSkipMarkerAsync(string sourceKey, string id, CancellationToken cancellationToken = default)
+    public async Task SaveSkipMarkerAsync(
+        string sourceKey,
+        string id,
+        string lineName,
+        long introEndMs,
+        long outroStartMs,
+        long durationMs,
+        CancellationToken cancellationToken = default)
     {
-        var document = await LoadAsync(cancellationToken);
-        return document.SkipMarkers.FirstOrDefault(item => item.SourceKey == sourceKey && item.Id == id);
-    }
-
-    public async Task SaveSkipMarkerAsync(string sourceKey, string id, long introEndMs, long outroStartMs, CancellationToken cancellationToken = default)
-    {
-        await _gate.WaitAsync(cancellationToken);
-        try
+        SkipMarkerRecord? marker = null;
+        if (introEndMs > 0 || outroStartMs > 0)
         {
-            var document = await LoadCoreAsync(cancellationToken);
-            document.SkipMarkers.RemoveAll(item => item.SourceKey == sourceKey && item.Id == id);
-            if (introEndMs > 0 || outroStartMs > 0)
-                document.SkipMarkers.Add(new SkipMarker(sourceKey, id, Math.Max(0, introEndMs), Math.Max(0, outroStartMs)));
-            await SaveCoreAsync(document, cancellationToken);
+            var remaining = outroStartMs > 0 && durationMs > outroStartMs
+                ? (int)Math.Clamp((durationMs - outroStartMs + 999) / 1000, 0, int.MaxValue)
+                : 0;
+            marker = new SkipMarkerRecord(
+                JsonLibraryStore.StableId("skip", sourceKey, id, sourceKey, lineName),
+                sourceKey,
+                id,
+                sourceKey,
+                lineName,
+                (int)Math.Clamp(introEndMs / 1000, 0, int.MaxValue),
+                remaining,
+                DateTimeOffset.UtcNow);
         }
-        finally { _gate.Release(); }
+
+        await _store.SaveSkipMarkerAsync(marker, sourceKey, id, sourceKey, lineName, cancellationToken);
     }
 
-    private async Task<LibraryDocument> LoadCoreAsync(CancellationToken cancellationToken)
-    {
-        if (!File.Exists(_filePath)) return new LibraryDocument();
-        try
-        {
-            await using var stream = File.OpenRead(_filePath);
-            return await JsonSerializer.DeserializeAsync<LibraryDocument>(stream, JsonOptions, cancellationToken) ?? new LibraryDocument();
-        }
-        catch (JsonException) { return new LibraryDocument(); }
-    }
-
-    private async Task SaveCoreAsync(LibraryDocument document, CancellationToken cancellationToken)
-    {
-        var directory = Path.GetDirectoryName(_filePath) ?? throw new InvalidOperationException("媒体库文件没有目录。");
-        Directory.CreateDirectory(directory);
-        var temporaryPath = $"{_filePath}.{Guid.NewGuid():N}.tmp";
-        try
-        {
-            await using (var stream = File.Create(temporaryPath))
-            {
-                await JsonSerializer.SerializeAsync(stream, document, JsonOptions, cancellationToken);
-                await stream.FlushAsync(cancellationToken);
-            }
-            File.Move(temporaryPath, _filePath, true);
-        }
-        finally { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }
-    }
-
-    public void Dispose() => _gate.Dispose();
+    public void Dispose() => _store.Dispose();
 }

@@ -733,10 +733,22 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
     public Task SaveHistoryAsync(PosterCard card, int sourceIndex, int episodeIndex, long positionMs, long durationMs) =>
         _libraryStore.SaveHistoryAsync(card, sourceIndex, episodeIndex, positionMs, durationMs);
 
-    public Task<SkipMarker?> GetSkipMarkerAsync(PosterCard card) => _libraryStore.GetSkipMarkerAsync(card.SourceKey, card.Id);
+    public Task<SkipMarker?> GetSkipMarkerAsync(PosterCard card, string lineName) =>
+        _libraryStore.GetSkipMarkerAsync(card.SourceKey, card.Id, lineName);
 
-    public Task SaveSkipMarkerAsync(PosterCard card, long introEndMs, long outroStartMs) =>
-        _libraryStore.SaveSkipMarkerAsync(card.SourceKey, card.Id, introEndMs, outroStartMs);
+    public Task SaveSkipMarkerAsync(
+        PosterCard card,
+        string lineName,
+        long introEndMs,
+        long outroStartMs,
+        long durationMs) =>
+        _libraryStore.SaveSkipMarkerAsync(
+            card.SourceKey,
+            card.Id,
+            lineName,
+            introEndMs,
+            outroStartMs,
+            durationMs);
 
     public async Task ClearHistoryAsync()
     {

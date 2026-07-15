@@ -94,12 +94,12 @@ public partial class PlayerWindow : Window, IDisposable
         SpeedSelector.SelectedItem = speedOptions.OrderBy(value => Math.Abs(value - _settings.DefaultSpeed)).First();
         if (_context is not null)
         {
-            _skipMarker = await _viewModel!.GetSkipMarkerAsync(_context.Card);
             TitleText.Text = _context.Card.Title;
             SourceSelector.ItemsSource = _context.Detail.Sources;
             SourceSelector.SelectedIndex = Math.Clamp(_sourceIndex, 0, _context.Detail.Sources.Count - 1);
             PopulateEpisodes();
             EpisodeSelector.SelectedIndex = Math.Clamp(_episodeIndex, 0, Math.Max(0, EpisodeSelector.Items.Count - 1));
+            _skipMarker = await _viewModel!.GetSkipMarkerAsync(_context.Card, CurrentLineName());
             UpdateSkipMarkerText();
         }
         else
@@ -215,7 +215,12 @@ public partial class PlayerWindow : Window, IDisposable
         var intro = Math.Max(0, _playback.Player.Time);
         var outro = _skipMarker?.OutroStartMs ?? 0;
         if (outro > 0 && intro >= outro) { SkipMarkerText.Text = "片头点必须早于片尾点"; return; }
-        await _viewModel.SaveSkipMarkerAsync(_context.Card, intro, outro);
+        await _viewModel.SaveSkipMarkerAsync(
+            _context.Card,
+            CurrentLineName(),
+            intro,
+            outro,
+            _playback.Player.Length);
         _skipMarker = new SkipMarker(_context.Card.SourceKey, _context.Card.Id, intro, outro);
         UpdateSkipMarkerText();
     }
@@ -226,7 +231,12 @@ public partial class PlayerWindow : Window, IDisposable
         var intro = _skipMarker?.IntroEndMs ?? 0;
         var outro = Math.Max(0, _playback.Player.Time);
         if (outro <= intro) { SkipMarkerText.Text = "片尾点必须晚于片头点"; return; }
-        await _viewModel.SaveSkipMarkerAsync(_context.Card, intro, outro);
+        await _viewModel.SaveSkipMarkerAsync(
+            _context.Card,
+            CurrentLineName(),
+            intro,
+            outro,
+            _playback.Player.Length);
         _skipMarker = new SkipMarker(_context.Card.SourceKey, _context.Card.Id, intro, outro);
         UpdateSkipMarkerText();
     }
@@ -234,7 +244,12 @@ public partial class PlayerWindow : Window, IDisposable
     private async void ClearSkip_Click(object sender, RoutedEventArgs e)
     {
         if (_viewModel is null || _context is null) return;
-        await _viewModel.SaveSkipMarkerAsync(_context.Card, 0, 0);
+        await _viewModel.SaveSkipMarkerAsync(
+            _context.Card,
+            CurrentLineName(),
+            0,
+            0,
+            _playback.Player.Length);
         _skipMarker = null;
         UpdateSkipMarkerText();
     }
@@ -266,8 +281,15 @@ public partial class PlayerWindow : Window, IDisposable
         PopulateEpisodes();
         EpisodeSelector.SelectedIndex = Math.Clamp(_episodeIndex, 0, Math.Max(0, EpisodeSelector.Items.Count - 1));
         _initializing = false;
+        _skipMarker = await _viewModel!.GetSkipMarkerAsync(_context!.Card, CurrentLineName());
+        UpdateSkipMarkerText();
         await OpenCurrentAsync();
     }
+
+    private string CurrentLineName() =>
+        _context is not null && _sourceIndex >= 0 && _sourceIndex < _context.Detail.Sources.Count
+            ? _context.Detail.Sources[_sourceIndex].Name
+            : string.Empty;
 
     private async void EpisodeSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {

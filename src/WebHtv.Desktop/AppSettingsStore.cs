@@ -1,5 +1,5 @@
-using System.Text.Json;
-using System.IO;
+using MTPlayer.Client.Core.Library;
+using MTPlayer.Client.Core.Settings;
 
 namespace WebHtv.Desktop;
 
@@ -32,42 +32,75 @@ internal sealed class CustomLiveSourceEntry
     public string? EpgAddress { get; set; }
 }
 
-internal sealed class AppSettingsStore(string filePath)
+internal sealed class AppSettingsStore : IDisposable
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private readonly string _filePath = filePath;
+    private readonly JsonSettingsStore _store;
+
+    public AppSettingsStore(string filePath)
+    {
+        _store = new JsonSettingsStore(filePath);
+    }
 
     public async Task<AppSettings> LoadAsync(CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(_filePath)) return new AppSettings();
-        try
+        var settings = await _store.LoadAsync(cancellationToken);
+        var groups = settings.ConfigurationGroups.Where(item => !item.IsDeleted).ToList();
+        return new AppSettings
         {
-            await using var stream = File.OpenRead(_filePath);
-            return await JsonSerializer.DeserializeAsync<AppSettings>(stream, JsonOptions, cancellationToken) ?? new AppSettings();
-        }
-        catch (JsonException)
-        {
-            return new AppSettings();
-        }
+            HardwareDecode = settings.HardwareDecode,
+            DefaultSpeed = settings.DefaultSpeed,
+            DefaultVolume = settings.DefaultVolume,
+            AutoFullscreen = settings.AutoFullscreen,
+            UseSourceCovers = settings.UseSourceCovers,
+            TmdbApiKey = settings.TmdbApiKey,
+            DisabledSiteKeys = [.. settings.DisabledSiteKeys],
+            ConfigurationSources = groups.Select(item => new ConfigurationSourceEntry
+            {
+                Id = item.Id.ToString("N"),
+                Name = item.Name,
+                Address = item.Address,
+            }).ToList(),
+            ActiveConfigurationSourceId = groups.FirstOrDefault(item => item.IsEnabled)?.Id.ToString("N") ?? string.Empty,
+            CustomLiveSources = settings.CustomLiveSources.Where(item => !item.IsDeleted).Select(item => new CustomLiveSourceEntry
+            {
+                Id = item.Id.ToString("N"),
+                Name = item.Name,
+                Address = item.Address,
+                EpgAddress = item.EpgAddress,
+            }).ToList(),
+        };
     }
 
-    public async Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
+    public Task SaveAsync(AppSettings settings, CancellationToken cancellationToken = default)
     {
-        var directory = Path.GetDirectoryName(_filePath) ?? throw new InvalidOperationException("设置文件没有目录。");
-        Directory.CreateDirectory(directory);
-        var temporaryPath = $"{_filePath}.{Guid.NewGuid():N}.tmp";
-        try
+        var now = DateTimeOffset.UtcNow;
+        var core = new ClientSettings
         {
-            await using (var stream = File.Create(temporaryPath))
-            {
-                await JsonSerializer.SerializeAsync(stream, settings, JsonOptions, cancellationToken);
-                await stream.FlushAsync(cancellationToken);
-            }
-            File.Move(temporaryPath, _filePath, true);
-        }
-        finally
-        {
-            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
-        }
+            HardwareDecode = settings.HardwareDecode,
+            DefaultSpeed = settings.DefaultSpeed,
+            DefaultVolume = settings.DefaultVolume,
+            AutoFullscreen = settings.AutoFullscreen,
+            UseSourceCovers = settings.UseSourceCovers,
+            TmdbApiKey = settings.TmdbApiKey,
+            DisabledSiteKeys = [.. settings.DisabledSiteKeys],
+            ConfigurationGroups = settings.ConfigurationSources.Select(item => new ConfigurationGroupRecord(
+                ParseOrCreateId(item.Id, "configuration", item.Address),
+                item.Name,
+                item.Address,
+                string.Equals(item.Id, settings.ActiveConfigurationSourceId, StringComparison.Ordinal),
+                now)).ToList(),
+            CustomLiveSources = settings.CustomLiveSources.Select(item => new CustomLiveSourceRecord(
+                ParseOrCreateId(item.Id, "live", item.Address),
+                item.Name,
+                item.Address,
+                item.EpgAddress,
+                now)).ToList(),
+        };
+        return _store.SaveAsync(core, cancellationToken);
     }
+
+    private static Guid ParseOrCreateId(string? value, string kind, string address) =>
+        Guid.TryParse(value, out var parsed) ? parsed : JsonLibraryStore.StableId(kind, address);
+
+    public void Dispose() => _store.Dispose();
 }
