@@ -1,0 +1,10 @@
+plugins {
+    id 'com.android.application' version '8.6.1' apply false
+    id 'com.android.library' version '8.6.1' apply false
+}
+
+tasks.named('wrapper') {
+    distributionType = Wrapper.DistributionType.BIN
+    distributionUrl = 'https://downloads.gradle.org/distributions/gradle-8.10.2-bin.zip'
+    validateDistributionUrl = false
+}

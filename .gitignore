@@ -34,3 +34,8 @@ installer/out/
 *.jks
 keystore.properties
 volumes/
+
+# Android local tool paths and generated output
+android/.gradle/
+android/local.properties
+android/**/build/

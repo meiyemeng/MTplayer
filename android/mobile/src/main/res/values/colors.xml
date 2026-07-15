@@ -1,0 +1,8 @@
+<resources>
+    <color name="mt_background">#090C10</color>
+    <color name="mt_surface">#151920</color>
+    <color name="mt_surface_high">#20252D</color>
+    <color name="mt_red">#F0192D</color>
+    <color name="mt_text">#F7F8FA</color>
+    <color name="mt_muted">#9BA3AE</color>
+</resources>
