@@ -13,6 +13,7 @@ using MTPlayer.Server.Data;
 using MTPlayer.Server.Devices;
 using MTPlayer.Server.Diagnostics;
 using MTPlayer.Server.Mail;
+using MTPlayer.Server.Maintenance;
 using MTPlayer.Server.Security;
 using MTPlayer.Server.Settings;
 using MTPlayer.Server.Sync;
@@ -20,6 +21,21 @@ using MTPlayer.Server.Sync;
 var builder = WebApplication.CreateBuilder(args);
 const string postgreSqlConnectionStringKey = "ConnectionStrings:PostgreSQL";
 const string dataEncryptionKeyConfigurationKey = "DATA_ENCRYPTION_KEY";
+var command = MaintenanceCommandLine.Parse(args);
+if (command.ExportOpenApiPath is not null)
+{
+    builder.Configuration[postgreSqlConnectionStringKey] =
+        "Host=127.0.0.1;Port=1;Database=openapi_export;Username=openapi_export;Password=openapi_export;Pooling=false";
+    builder.Configuration[dataEncryptionKeyConfigurationKey] =
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+    builder.Configuration["Mail:WorkerEnabled"] = "false";
+}
+
+if (command.RotateKey || command.ExportOpenApiPath is not null)
+{
+    builder.Logging.SetMinimumLevel(LogLevel.Warning);
+}
+
 var dataEncryptionKey = builder.Configuration[dataEncryptionKeyConfigurationKey] ?? string.Empty;
 try
 {
@@ -92,6 +108,7 @@ builder.Services.AddScoped<CurrentUser>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<DeviceService>();
 builder.Services.AddScoped<SyncService>();
+builder.Services.AddScoped<KeyRotationService>();
 builder.Services.AddScoped<AdminAuthenticationService>();
 builder.Services.AddScoped<AdminCookieEvents>();
 builder.Services.AddSingleton<AdminSetupService>();
@@ -174,6 +191,22 @@ app.MapDeviceEndpoints();
 app.MapSyncEndpoints();
 app.MapMtPlayerHealthChecks();
 app.MapRazorPages();
+if (command.ExportOpenApiPath is not null)
+{
+    await OpenApiExporter.ExportAsync(app, command.ExportOpenApiPath, app.Lifetime.ApplicationStopping);
+    return;
+}
+
+if (command.RotateKey)
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    var rotation = scope.ServiceProvider.GetRequiredService<KeyRotationService>();
+    var newKey = command.NewEncryptionKey ?? KeyRotationService.CreateKey();
+    await rotation.RotateAsync(newKey, app.Lifetime.ApplicationStopping);
+    Console.WriteLine(newKey);
+    return;
+}
+
 app.Run();
 
 static void AddFixedWindowPolicy(
