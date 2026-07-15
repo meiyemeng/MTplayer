@@ -1,0 +1,3 @@
+-keep class cn.mtplayer.core.** { *; }
+-keep class cn.mtplayer.tv.** { *; }
+-dontwarn org.conscrypt.**

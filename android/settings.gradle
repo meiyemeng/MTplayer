@@ -6,4 +6,4 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
 rootProject.name = 'MTPlayerAndroid'
-include ':core', ':mobile'
+include ':core', ':mobile', ':tv'

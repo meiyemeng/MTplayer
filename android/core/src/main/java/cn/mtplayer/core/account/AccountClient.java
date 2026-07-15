@@ -16,6 +16,13 @@ import okhttp3.RequestBody;
 import okhttp3.Response;
 
 public final class AccountClient {
+    public static final class TvCode {
+        public String deviceCode;
+        public String userCode;
+        public String verificationUri;
+        public String expiresAtUtc;
+        public int pollIntervalSeconds;
+    }
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private final SharedPreferences prefs;
     private final OkHttpClient http;
@@ -54,6 +61,37 @@ public final class AccountClient {
     }
 
     public void logout() { prefs.edit().remove("refresh").remove("access").remove("email").apply(); }
+
+    public TvCode beginTvLogin(String serverName) throws IOException {
+        String origin = serverUrl(); if (origin.isEmpty()) throw new IOException("请先绑定服务器地址");
+        okhttp3.HttpUrl url = okhttp3.HttpUrl.parse(origin + "/api/v1/auth/tv/device-code");
+        if (url == null) throw new IOException("服务器地址无效");
+        Request request = new Request.Builder().url(url.newBuilder().addQueryParameter("serverName", serverName).build()).get().build();
+        try (Response response = http.newCall(request).execute()) {
+            String raw = response.body() == null ? "" : response.body().string();
+            if (!response.isSuccessful()) throw new IOException("设备登录请求失败：HTTP " + response.code());
+            TvCode code = gson.fromJson(raw, TvCode.class);
+            if (code == null || code.deviceCode == null) throw new IOException("服务器未返回设备码");
+            return code;
+        }
+    }
+
+    public boolean pollTvLogin(String deviceCode) throws IOException {
+        JsonObject body = new JsonObject(); body.addProperty("deviceCode", deviceCode);
+        String origin = serverUrl(); if (origin.isEmpty()) throw new IOException("请先绑定服务器地址");
+        Request request = new Request.Builder().url(origin + "/api/v1/auth/tv/token").post(RequestBody.create(gson.toJson(body), JSON)).build();
+        try (Response response = http.newCall(request).execute()) {
+            String raw = response.body() == null ? "" : response.body().string();
+            if (response.code() == 428 || response.code() == 429) return false;
+            if (!response.isSuccessful()) throw new IOException("设备码已失效，请重新获取");
+            JsonObject tokens = gson.fromJson(raw, JsonObject.class);
+            String refresh = tokens != null && tokens.has("refreshToken") ? tokens.get("refreshToken").getAsString() : "";
+            String access = tokens != null && tokens.has("accessToken") ? tokens.get("accessToken").getAsString() : "";
+            if (refresh.isEmpty()) throw new IOException("服务器未返回登录令牌");
+            prefs.edit().putString("refresh", refresh).putString("access", access).apply();
+            return true;
+        }
+    }
 
     private JsonObject post(String path, JsonObject value, boolean requireJson) throws IOException {
         String origin = serverUrl(); if (origin.isEmpty()) throw new IOException("请先绑定服务器地址");
