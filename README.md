@@ -55,6 +55,12 @@ cd android
 .\gradlew.bat :core:test :mobile:assembleDebug :tv:assembleDebug
 ```
 
+如果电视上已有签名不同但包名相同的旧版，可构建独立包名的共存版，避免卸载旧应用：
+
+```powershell
+.\gradlew.bat :tv:assembleRelease -PtvApplicationId=cn.mtplayer.tv.compat -PtvAppLabel="MT播放器 TV 共存版"
+```
+
 ### macOS
 
 ```powershell

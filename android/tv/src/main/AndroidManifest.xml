@@ -8,7 +8,7 @@
         android:allowBackup="true"
         android:banner="@drawable/logo_header"
         android:icon="@mipmap/ic_launcher"
-        android:label="MT播放器 TV"
+        android:label="${tvAppLabel}"
         android:theme="@style/Theme.MTPlayer.TV"
         android:usesCleartextTraffic="true">
         <activity android:name=".TvPlayerActivity" android:configChanges="orientation|screenSize" android:screenOrientation="landscape" />
