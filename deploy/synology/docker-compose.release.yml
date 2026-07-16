@@ -19,7 +19,7 @@ services:
       retries: 10
 
   mt-api:
-    image: mtplayer/server:1.0.1-amd64
+    image: mtplayer/server:1.1.2-amd64
     pull_policy: never
     container_name: mtplayer-api
     restart: unless-stopped

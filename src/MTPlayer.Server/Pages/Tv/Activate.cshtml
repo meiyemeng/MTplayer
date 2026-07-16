@@ -1,22 +1,142 @@
 @page "/tv/activate"
 @attribute [Microsoft.AspNetCore.Authorization.AllowAnonymous]
 @{
-    Layout = null;
+    Layout = "_AuthLayout";
+    ViewData["Title"] = "确认电视登录";
+    ViewData["Kicker"] = "TV DEVICE SIGN-IN";
     ViewContext.HttpContext.Response.Headers.CacheControl = "no-store";
 }
-<!doctype html>
-<html lang="zh-CN">
-<head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="Cache-Control" content="no-store" />
-    <title>确认电视登录 - MT播放器</title>
-</head>
-<body>
-<main>
-    <h1>确认电视登录</h1>
-    <p>请在已登录的 MT播放器 手机端或桌面端打开“设备管理”，输入电视显示的 8 位确认码。</p>
-    <p>确认码有效期为 10 分钟。不要把确认码发送给其他人。</p>
-</main>
-</body>
-</html>
+
+<section class="auth-card">
+    <header class="auth-card-header">
+        <p class="eyebrow">电视设备登录</p>
+        <h2>确认电视登录</h2>
+        <p>使用你的 MT播放器账号，输入电视上显示的 8 位确认码。</p>
+    </header>
+
+    <form id="activation-form" class="auth-form" novalidate>
+        <div class="field">
+            <label for="email">邮箱</label>
+            <input id="email" name="email" type="email" autocomplete="email" required placeholder="name@example.com" />
+        </div>
+        <div class="field">
+            <label for="password">密码</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="输入账号密码" />
+        </div>
+        <div class="field">
+            <label for="user-code">电视确认码</label>
+            <input id="user-code" name="userCode" type="text" inputmode="text" autocomplete="one-time-code"
+                   maxlength="8" minlength="8" required placeholder="例如 45ELUWHS"
+                   style="text-transform: uppercase; letter-spacing: .22em; font-family: var(--font-data); font-weight: 700;" />
+            <span class="field-hint">确认码有效期为 10 分钟，仅用于本次电视登录。</span>
+        </div>
+
+        <div id="activation-message" class="activation-message" role="status" aria-live="polite" hidden></div>
+        <button id="activation-submit" class="button primary" type="submit">确认并登录电视</button>
+    </form>
+
+    <div class="auth-security">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.5 2.8 8.5 7 10 4.2-1.5 7-5.5 7-10V6l-7-3Z" /></svg>
+        <span>请只确认你眼前电视上显示的代码，不要把确认码发给其他人。</span>
+    </div>
+</section>
+
+<style>
+    .activation-message { padding: 12px 14px; border: 1px solid rgba(255, 107, 120, .28); border-radius: 11px; color: #ffd1d5; background: rgba(255, 107, 120, .08); font-size: 13px; line-height: 1.55; }
+    .activation-message.success { border-color: rgba(70, 213, 154, .28); color: #c8f6e2; background: rgba(70, 213, 154, .08); }
+</style>
+
+<script>
+(() => {
+    const form = document.getElementById('activation-form');
+    const email = document.getElementById('email');
+    const password = document.getElementById('password');
+    const code = document.getElementById('user-code');
+    const submit = document.getElementById('activation-submit');
+    const message = document.getElementById('activation-message');
+
+    const preset = new URLSearchParams(window.location.search).get('code');
+    if (preset) code.value = normalizeCode(preset);
+
+    code.addEventListener('input', () => {
+        const normalized = normalizeCode(code.value);
+        if (code.value !== normalized) code.value = normalized;
+    });
+
+    form.addEventListener('submit', async event => {
+        event.preventDefault();
+        const userCode = normalizeCode(code.value);
+        code.value = userCode;
+        if (!form.reportValidity() || userCode.length !== 8) {
+            show('请输入电视上显示的 8 位确认码。');
+            return;
+        }
+
+        setBusy(true);
+        show('正在验证账号并确认电视登录…', false, true);
+        try {
+            const login = await fetch('/api/v1/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                cache: 'no-store',
+                body: JSON.stringify({
+                    email: email.value.trim(),
+                    password: password.value,
+                    deviceName: '电视登录确认网页',
+                    platform: 'web'
+                })
+            });
+            const loginBody = await readBody(login);
+            if (!login.ok || !loginBody.accessToken) {
+                throw new Error(problemMessage(loginBody, '邮箱或密码错误，无法确认电视登录。'));
+            }
+
+            const approval = await fetch('/api/v1/auth/tv/approve', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${loginBody.accessToken}`
+                },
+                cache: 'no-store',
+                body: JSON.stringify({ userCode })
+            });
+            if (!approval.ok) {
+                const approvalBody = await readBody(approval);
+                throw new Error(problemMessage(approvalBody, '确认码无效、已过期或已经使用。'));
+            }
+
+            password.value = '';
+            show('电视登录已确认。请返回电视，应用会自动完成登录。', true);
+            submit.textContent = '已确认';
+        } catch (error) {
+            show(error instanceof Error ? error.message : '确认失败，请稍后重试。');
+            setBusy(false);
+        }
+    });
+
+    function normalizeCode(value) {
+        return String(value || '').replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 8);
+    }
+
+    async function readBody(response) {
+        const text = await response.text();
+        if (!text) return {};
+        try { return JSON.parse(text); } catch { return {}; }
+    }
+
+    function problemMessage(body, fallback) {
+        return body && (body.title || body.message) ? (body.title || body.message) : fallback;
+    }
+
+    function show(text, success = false, pending = false) {
+        message.hidden = false;
+        message.classList.toggle('success', success || pending);
+        message.textContent = text;
+    }
+
+    function setBusy(busy) {
+        submit.disabled = busy;
+        submit.textContent = busy ? '正在确认…' : '确认并登录电视';
+    }
+})();
+</script>

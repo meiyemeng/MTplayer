@@ -3,7 +3,7 @@ plugins { id 'com.android.application' }
 def keystoreProperties = new Properties()
 def keystorePropertiesFile = rootProject.file('keystore.properties')
 def tvApplicationId = project.findProperty('tvApplicationId') ?: 'cn.mtplayer.tv'
-def tvAppLabel = project.findProperty('tvAppLabel') ?: 'MT播放器 TV'
+def tvAppLabel = project.findProperty('tvAppLabel') ?: 'MT播放器'
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
@@ -16,8 +16,8 @@ android {
         manifestPlaceholders = [tvAppLabel: tvAppLabel]
         minSdk 21
         targetSdk 35
-        versionCode 111
-        versionName '1.1.1'
+        versionCode 112
+        versionName '1.1.2'
     }
     signingConfigs {
         release {

@@ -1,0 +1,25 @@
+name: Build server Docker image
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the v prefix
+        required: true
+        default: 1.1.2
+
+jobs:
+  docker-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build --platform linux/amd64 --tag mtplayer/server:${{ inputs.version }}-amd64 --file deploy/synology/Dockerfile .
+      - name: Export image
+        run: docker save mtplayer/server:${{ inputs.version }}-amd64 | gzip -9 > MTPlayer-Server-Docker-amd64-${{ inputs.version }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mtplayer-server-${{ inputs.version }}
+          path: MTPlayer-Server-Docker-amd64-${{ inputs.version }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7

@@ -33,6 +33,10 @@ public sealed class DeviceFlowTests(PostgreSqlAuthFixture fixture) : IClassFixtu
         Assert.Equal(new Uri("https://device.example.com/tv/activate"), created.VerificationUri);
         var verificationPage = await fixture.Client.GetStringAsync("/tv/activate");
         Assert.Contains("确认电视登录", verificationPage, StringComparison.Ordinal);
+        Assert.Contains("id=\"activation-form\"", verificationPage, StringComparison.Ordinal);
+        Assert.Contains("id=\"user-code\"", verificationPage, StringComparison.Ordinal);
+        Assert.Contains("/api/v1/auth/login", verificationPage, StringComparison.Ordinal);
+        Assert.Contains("/api/v1/auth/tv/approve", verificationPage, StringComparison.Ordinal);
         Assert.DoesNotContain(created.DeviceCode, created.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain(created.UserCode, created.ToString(), StringComparison.Ordinal);
 
