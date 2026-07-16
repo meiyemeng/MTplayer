@@ -163,8 +163,13 @@ public final class ConfigurationRepository {
     }
 
     private JsonElement parsePossiblyWrapped(String body) {
-        String value = body.trim();
-        JsonElement element = gson.fromJson(value, JsonElement.class);
+        String value = TvBoxConfigurationPayloadDecoder.decode(body);
+        JsonElement element;
+        try {
+            element = gson.fromJson(value, JsonElement.class);
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException("配置接口返回的内容不是有效 JSON", exception);
+        }
         if (element != null && element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
             value = element.getAsString();
             try { value = new String(Base64.decode(value, Base64.DEFAULT), StandardCharsets.UTF_8); } catch (IllegalArgumentException ignored) { }
