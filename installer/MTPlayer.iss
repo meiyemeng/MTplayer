@@ -1,5 +1,5 @@
 #define MyAppName "MT播放器"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.1.1"
 #define MyAppPublisher "MT Player"
 #define MyAppExeName "MTPlayer.exe"
 
@@ -13,7 +13,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 LicenseFile=DISCLAIMER.txt
 OutputDir=..\artifacts\installer
-OutputBaseFilename=MT播放器-Setup-1.1.0
+OutputBaseFilename=MT播放器-Setup-1.1.1
 SetupIconFile=..\src\WebHtv.Desktop\Assets\mtplayer.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64

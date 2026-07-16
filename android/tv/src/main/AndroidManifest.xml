@@ -10,7 +10,7 @@
         android:icon="@mipmap/ic_launcher"
         android:label="MT播放器 TV"
         android:theme="@style/Theme.MTPlayer.TV"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="true">
         <activity android:name=".TvPlayerActivity" android:configChanges="orientation|screenSize" android:screenOrientation="landscape" />
         <activity android:name=".TvDetailActivity" android:screenOrientation="landscape" />
         <activity android:name=".TvMainActivity" android:exported="true" android:screenOrientation="landscape">

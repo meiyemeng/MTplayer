@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -29,6 +30,7 @@ import okhttp3.Response;
 public final class ConfigurationRepository {
     private static final int MAX_CONFIG_BYTES = 10 * 1024 * 1024;
     private static final Type GROUP_LIST = new TypeToken<List<SourceGroup>>(){}.getType();
+    private static final Type STRING_LIST = new TypeToken<List<String>>(){}.getType();
     private final SharedPreferences prefs;
     private final OkHttpClient http;
     private final Gson gson = new Gson();
@@ -45,7 +47,7 @@ public final class ConfigurationRepository {
     }
 
     public synchronized SourceGroup add(String name, String url) {
-        String normalized = requireHttpsUrl(url);
+        String normalized = requireHttpUrl(url);
         List<SourceGroup> groups = groups();
         for (SourceGroup group : groups) {
             if (group.url.equalsIgnoreCase(normalized)) {
@@ -71,7 +73,24 @@ public final class ConfigurationRepository {
 
     public synchronized void remove(String id) {
         List<SourceGroup> groups = groups();
-        groups.removeIf(group -> group.id.equals(id));
+        for (Iterator<SourceGroup> iterator = groups.iterator(); iterator.hasNext();) if (iterator.next().id.equals(id)) iterator.remove();
+        save(groups);
+        List<String> deleted = deletedIds();
+        if (!deleted.contains(id)) deleted.add(id);
+        prefs.edit().putString("deleted", gson.toJson(deleted)).apply();
+    }
+
+    public synchronized List<String> deletedIds() {
+        List<String> values = gson.fromJson(prefs.getString("deleted", "[]"), STRING_LIST);
+        return values == null ? new ArrayList<>() : new ArrayList<>(values);
+    }
+
+    public synchronized void clearDeletedIds() { prefs.edit().remove("deleted").apply(); }
+
+    public synchronized void applySynced(String id, String name, String url, boolean enabled, boolean deleted) {
+        List<SourceGroup> groups = groups();
+        for (Iterator<SourceGroup> iterator = groups.iterator(); iterator.hasNext();) if (iterator.next().id.equals(id)) iterator.remove();
+        if (!deleted) groups.add(new SourceGroup(id, name, requireHttpUrl(url), enabled));
         save(groups);
     }
 
@@ -178,11 +197,12 @@ public final class ConfigurationRepository {
     private static int number(JsonObject obj, String key, int fallback) { JsonElement e = obj.get(key); try { return e != null && e.isJsonPrimitive() ? e.getAsInt() : fallback; } catch (RuntimeException ex) { return fallback; } }
     private static String first(String... values) { for (String value : values) if (value != null && !value.trim().isEmpty()) return value; return null; }
     private static String resolve(String parent, String child) { try { return URI.create(parent).resolve(child).toString(); } catch (RuntimeException ex) { return child; } }
-    private static String requireHttpsUrl(String value) {
+    private static String requireHttpUrl(String value) {
         String url = value == null ? "" : value.trim();
         URI uri;
-        try { uri = URI.create(url); } catch (RuntimeException ex) { throw new IllegalArgumentException("请输入有效的 HTTPS 配置地址"); }
-        if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) throw new IllegalArgumentException("正式版只接受 HTTPS 配置地址");
+        try { uri = URI.create(url); } catch (RuntimeException ex) { throw new IllegalArgumentException("请输入有效的 HTTP 或 HTTPS 配置地址"); }
+        boolean supported = "https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme());
+        if (!supported || uri.getHost() == null) throw new IllegalArgumentException("配置地址必须以 http:// 或 https:// 开头");
         return uri.toString();
     }
 }

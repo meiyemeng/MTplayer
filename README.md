@@ -8,7 +8,7 @@ MT播放器是一套不内置影视内容的多平台影视播放器与账户同
 | --- | --- | --- |
 | Windows | Windows 10 / 11，x64 或 x86 | WPF 原生桌面端、Spider/CMS 配置、多源搜索、海报墙、LibVLC 播放、直播、收藏/历史、登录同步 |
 | Android 手机 | Android 8.0+ | 触屏界面、CMS 配置源、多源搜索、详情/选集、Media3 播放、收藏/历史、登录同步 |
-| Android TV | Android TV 8.0+ | Leanback 启动、遥控器焦点导航、设备码登录、详情/选集、Media3 播放 |
+| Android TV | Android TV 5.0+ | Leanback 启动、遥控器焦点导航、设备码登录、详情/选集、Media3 播放；APK 使用 v1+v2 双签名兼容旧电视 |
 | macOS | macOS 10.15+，Intel x64；Apple Silicon 可使用 Rosetta 2 | Avalonia 桌面界面、CMS 配置、多源搜索、详情/选集、LibVLC 播放、收藏/历史、登录同步 |
 
 Android 与 macOS 客户端当前读取标准 TVBox `type=1` / CMS API；JAR/JS Spider 运行时由 Windows 客户端提供。
@@ -22,6 +22,8 @@ Android 与 macOS 客户端当前读取标准 TVBox `type=1` / CMS API；JAR/JS 
 - 收藏、观看记录和本地续播数据
 - Windows 支持 M3U/M3U8/TXT 直播源、`tvg-logo` 台标与可选 XMLTV 节目单
 - 游客可完整使用本地播放；登录后才启用跨设备同步
+- Android 手机配置源和直播流同时支持 `http://` 与 `https://`；账户服务器仍强制 HTTPS 以保护密码和登录令牌
+- Windows 当前配置源会在添加后、启动时和每 20 分钟自动刷新，也可在设置中立即更新
 
 ## 源码结构
 

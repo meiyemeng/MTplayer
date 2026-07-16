@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -80,7 +81,7 @@ public final class CmsCatalogueClient {
         String[] lineValues = split(text(vod, "vod_play_url"), "\\$\\$\\$");
         for (int i = 0; i < lineValues.length; i++) {
             PlayLine line = new PlayLine();
-            line.name = i < lineNames.length && !lineNames[i].isBlank() ? lineNames[i] : "线路 " + (i + 1);
+            line.name = i < lineNames.length && !lineNames[i].trim().isEmpty() ? lineNames[i] : "线路 " + (i + 1);
             for (String raw : lineValues[i].split("#")) {
                 int separator = raw.indexOf('$');
                 if (separator <= 0 || separator >= raw.length() - 1) continue;
@@ -102,7 +103,9 @@ public final class CmsCatalogueClient {
             // or preinstalling a different content provider.
             for (int page = 1; page <= 3; page++) addItems(result, site, request(site.api, "detail", null, null, page));
             String needle = normalize(keyword);
-            result.removeIf(item -> !normalize(item.name).contains(needle));
+            for (Iterator<MediaItem> iterator = result.iterator(); iterator.hasNext();) {
+                if (!normalize(iterator.next().name).contains(needle)) iterator.remove();
+            }
         }
         return result;
     }
@@ -149,7 +152,7 @@ public final class CmsCatalogueClient {
     private static JsonArray array(JsonObject object, String key) { JsonElement e = object.get(key); return e != null && e.isJsonArray() ? e.getAsJsonArray() : null; }
     private static String text(JsonObject object, String key) { JsonElement e = object.get(key); return e != null && !e.isJsonNull() && e.isJsonPrimitive() ? e.getAsString() : null; }
     private static String first(String... values) { for (String value : values) if (value != null && !value.trim().isEmpty()) return value; return null; }
-    private static String[] split(String value, String regex) { return value == null || value.isBlank() ? new String[0] : value.split(regex, -1); }
+    private static String[] split(String value, String regex) { return value == null || value.trim().isEmpty() ? new String[0] : value.split(regex, -1); }
     private static String html(String value) { return value == null ? "" : value.replaceAll("<[^>]*>", "").replace("&nbsp;", " ").trim(); }
     private static String normalize(String value) { return value == null ? "" : value.replaceAll("[\\p{P}\\p{Z}]", "").toUpperCase(Locale.ROOT); }
 }

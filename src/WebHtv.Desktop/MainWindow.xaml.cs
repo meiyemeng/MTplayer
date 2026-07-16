@@ -1,17 +1,21 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 
 namespace WebHtv.Desktop;
 
 public partial class MainWindow : Window
 {
     private readonly ShellViewModel _viewModel = ShellViewModel.CreateDefault();
+    private readonly DispatcherTimer _configurationRefreshTimer = new() { Interval = TimeSpan.FromMinutes(20) };
     private string _activePage = "home";
+    private bool _configurationRefreshRunning;
 
     public MainWindow()
     {
         InitializeComponent();
         DataContext = _viewModel;
+        _configurationRefreshTimer.Tick += ConfigurationRefreshTimer_Tick;
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -20,6 +24,31 @@ public partial class MainWindow : Window
         LoadSettingsControls();
         ShowPage("home");
         await _viewModel.LoadTopListsAsync();
+        _configurationRefreshTimer.Start();
+        await RefreshConfigurationAsync();
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _configurationRefreshTimer.Stop();
+        base.OnClosed(e);
+    }
+
+    private async void ConfigurationRefreshTimer_Tick(object? sender, EventArgs e) => await RefreshConfigurationAsync();
+
+    private async Task RefreshConfigurationAsync()
+    {
+        if (_configurationRefreshRunning) return;
+        _configurationRefreshRunning = true;
+        try
+        {
+            await _viewModel.ImportFromAddressAsync();
+            await _viewModel.LoadTopListsAsync();
+        }
+        finally
+        {
+            _configurationRefreshRunning = false;
+        }
     }
 
     private async void ImportNetworkConfiguration_Click(object sender, RoutedEventArgs e)
@@ -126,7 +155,11 @@ public partial class MainWindow : Window
     {
         await _viewModel.AddConfigurationSourceAsync(ConfigurationSourceNameText.Text, ConfigurationSourceAddressText.Text);
         ConfigurationSourceNameText.Clear();
+        LoadSettingsControls();
+        await _viewModel.LoadTopListsAsync();
     }
+
+    private async void RefreshConfigurationSource_Click(object sender, RoutedEventArgs e) => await RefreshConfigurationAsync();
 
     private async void ActivateConfigurationSource_Click(object sender, RoutedEventArgs e)
     {

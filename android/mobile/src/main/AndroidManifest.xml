@@ -9,7 +9,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.MTPlayer"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="true">
         <activity android:name=".PlayerActivity" android:configChanges="orientation|screenSize" android:screenOrientation="sensorLandscape" />
         <activity android:name=".DetailActivity" />
         <activity android:name=".MainActivity" android:exported="true">
