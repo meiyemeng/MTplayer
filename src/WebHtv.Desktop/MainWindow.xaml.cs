@@ -43,7 +43,10 @@ public partial class MainWindow : Window
         try
         {
             await _viewModel.ImportFromAddressAsync();
-            await _viewModel.LoadTopListsAsync();
+            if (_viewModel.LastConfigurationImportSucceeded)
+            {
+                await _viewModel.LoadTopListsAsync();
+            }
         }
         finally
         {
@@ -55,7 +58,10 @@ public partial class MainWindow : Window
     {
         await _viewModel.ImportFromAddressAsync();
         LoadSettingsControls();
-        await _viewModel.LoadTopListsAsync();
+        if (_viewModel.LastConfigurationImportSucceeded)
+        {
+            await _viewModel.LoadTopListsAsync();
+        }
     }
 
     private async void Search_Click(object sender, RoutedEventArgs e)
@@ -156,17 +162,43 @@ public partial class MainWindow : Window
         await _viewModel.AddConfigurationSourceAsync(ConfigurationSourceNameText.Text, ConfigurationSourceAddressText.Text);
         ConfigurationSourceNameText.Clear();
         LoadSettingsControls();
-        await _viewModel.LoadTopListsAsync();
+        if (_viewModel.LastConfigurationImportSucceeded)
+        {
+            await _viewModel.LoadTopListsAsync();
+        }
     }
 
-    private async void RefreshConfigurationSource_Click(object sender, RoutedEventArgs e) => await RefreshConfigurationAsync();
+    private async void RefreshConfigurationSource_Click(object sender, RoutedEventArgs e)
+    {
+        if (_configurationRefreshRunning) return;
+        _configurationRefreshRunning = true;
+        try
+        {
+            await _viewModel.UpdateActiveConfigurationSourceAsync(ConfigurationSourceAddressText.Text);
+            if (_viewModel.LastConfigurationImportSucceeded)
+            {
+                await _viewModel.LoadTopListsAsync();
+            }
+            else
+            {
+                MessageBox.Show(this, _viewModel.StatusMessage, "配置更新失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        finally
+        {
+            _configurationRefreshRunning = false;
+        }
+    }
 
     private async void ActivateConfigurationSource_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: ConfigurationSourceEntry entry })
         {
             await _viewModel.ActivateConfigurationSourceAsync(entry);
-            await _viewModel.LoadTopListsAsync();
+            if (_viewModel.LastConfigurationImportSucceeded)
+            {
+                await _viewModel.LoadTopListsAsync();
+            }
         }
     }
 

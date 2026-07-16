@@ -21,7 +21,7 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
 {
     private const int MaximumRemoteConfigurationBytes = 10 * 1024 * 1024;
     private const string DefaultConfigurationAddress = "https://xn--sdds-rp5imh.v.nxog.top/apitv.php?id=3";
-    private static readonly HttpClient ConfigurationHttpClient = new(new HttpClientHandler { UseProxy = false })
+    private static readonly HttpClient ConfigurationHttpClient = new(new HttpClientHandler { UseProxy = true })
     {
         Timeout = TimeSpan.FromSeconds(20),
         MaxResponseContentBufferSize = MaximumRemoteConfigurationBytes
@@ -59,6 +59,9 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
         ConfigurationHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36");
         ConfigurationHttpClient.DefaultRequestHeaders.Accept.ParseAdd("*/*");
+        DirectConfigurationHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36");
+        DirectConfigurationHttpClient.DefaultRequestHeaders.Accept.ParseAdd("*/*");
         PlaybackProbeHttpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36");
     }
@@ -191,6 +194,8 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
 
     public AppSettings Settings => _settings;
 
+    public bool LastConfigurationImportSucceeded { get; private set; }
+
     public static ShellViewModel CreateDefault()
     {
         var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
@@ -267,6 +272,7 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
 
     public async Task ImportFromAddressAsync()
     {
+        LastConfigurationImportSucceeded = false;
         if (!Uri.TryCreate(ConfigurationAddress.Trim(), UriKind.Absolute, out var address) ||
             (!string.Equals(address.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
              !string.Equals(address.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
@@ -277,21 +283,7 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
 
         try
         {
-            using var response = await ConfigurationHttpClient.GetAsync(address, HttpCompletionOption.ResponseContentRead);
-            response.EnsureSuccessStatusCode();
-
-            if (response.Content.Headers.ContentLength is > MaximumRemoteConfigurationBytes)
-            {
-                StatusMessage = "网络配置超过 10 MB，已取消导入。";
-                return;
-            }
-
-            var sourceText = await response.Content.ReadAsStringAsync();
-            var curlSourceText = await DownloadWithCurlIfRequiredAsync(address, "<");
-            if (!curlSourceText.TrimStart().StartsWith('<'))
-            {
-                sourceText = curlSourceText;
-            }
+            var sourceText = await DownloadRemoteConfigurationAsync(address);
             if (System.Text.Encoding.UTF8.GetByteCount(sourceText) > MaximumRemoteConfigurationBytes)
             {
                 StatusMessage = "网络配置超过 10 MB，已取消导入。";
@@ -299,10 +291,44 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
             }
 
             await SaveImportedConfigurationAsync(sourceText, address.Host);
+            LastConfigurationImportSucceeded = true;
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or ArgumentException or IOException or UnauthorizedAccessException)
         {
             StatusMessage = $"无法从网络地址导入：{exception.Message}";
+        }
+    }
+
+    public async Task UpdateActiveConfigurationSourceAsync(string address)
+    {
+        LastConfigurationImportSucceeded = false;
+        var trimmedAddress = address.Trim();
+        if (!Uri.TryCreate(trimmedAddress, UriKind.Absolute, out var parsedAddress) ||
+            (!string.Equals(parsedAddress.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(parsedAddress.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+        {
+            StatusMessage = "请输入有效的 http:// 或 https:// 配置地址。";
+            return;
+        }
+
+        var activeSource = _settings.ConfigurationSources.FirstOrDefault(item => item.Id == _settings.ActiveConfigurationSourceId);
+        if (activeSource is null)
+        {
+            StatusMessage = "当前没有可更新的配置源。";
+            return;
+        }
+
+        try
+        {
+            activeSource.Address = trimmedAddress;
+            ConfigurationAddress = trimmedAddress;
+            await _settingsStore.SaveAsync(_settings);
+            RefreshManagedSources();
+            await ImportFromAddressAsync();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            StatusMessage = $"保存配置源地址失败：{exception.Message}";
         }
     }
 
@@ -809,8 +835,6 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
-            startInfo.ArgumentList.Add("--noproxy");
-            startInfo.ArgumentList.Add("*");
             startInfo.ArgumentList.Add("--silent");
             startInfo.ArgumentList.Add("--show-error");
             startInfo.ArgumentList.Add("--insecure");
@@ -842,6 +866,58 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
         }
     }
 
+    private static async Task<string> DownloadRemoteConfigurationAsync(Uri address)
+    {
+        var failures = new List<Exception>();
+        foreach (var client in new[] { ConfigurationHttpClient, DirectConfigurationHttpClient })
+        {
+            try
+            {
+                using var response = await client.GetAsync(address, HttpCompletionOption.ResponseContentRead);
+                response.EnsureSuccessStatusCode();
+                if (response.Content.Headers.ContentLength is > MaximumRemoteConfigurationBytes)
+                {
+                    throw new InvalidDataException("网络配置超过 10 MB。");
+                }
+
+                var sourceText = await response.Content.ReadAsStringAsync();
+                if (System.Text.Encoding.UTF8.GetByteCount(sourceText) > MaximumRemoteConfigurationBytes)
+                {
+                    throw new InvalidDataException("网络配置超过 10 MB。");
+                }
+
+                if (!sourceText.TrimStart().StartsWith('<'))
+                {
+                    return sourceText;
+                }
+
+                failures.Add(new InvalidDataException("服务器返回了网页，而不是 TVBox 配置。"));
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or IOException or InvalidDataException)
+            {
+                failures.Add(exception);
+            }
+        }
+
+        try
+        {
+            var sourceText = await DownloadWithCurlIfRequiredAsync(address, "<");
+            if (!sourceText.TrimStart().StartsWith('<'))
+            {
+                return sourceText;
+            }
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException)
+        {
+            failures.Add(exception);
+        }
+
+        var lastFailure = failures.LastOrDefault();
+        throw new HttpRequestException(
+            $"配置源连接失败（已尝试系统代理和直连）：{lastFailure?.Message ?? "没有收到有效配置"}",
+            lastFailure);
+    }
+
     private static async Task<ConfigurationDocument> ExpandDepotAsync(ConfigurationDocument document)
     {
         var rootProfile = TvBoxProfileParser.Parse(document.SourceText).Profile;
@@ -861,7 +937,7 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
 
             try
             {
-                var sourceText = await DownloadWithCurlIfRequiredAsync(address, "<");
+                var sourceText = await DownloadRemoteConfigurationAsync(address);
                 if (System.Text.Encoding.UTF8.GetByteCount(sourceText) > MaximumRemoteConfigurationBytes)
                 {
                     continue;
