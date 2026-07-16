@@ -2,6 +2,12 @@ package cn.mtplayer.core.config;
 
 import android.util.Base64;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
+import com.google.gson.Strictness;
+import com.google.gson.stream.JsonReader;
+
+import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 
 /** Decodes the Base64 envelope used by some TVBox configuration endpoints. */
@@ -38,6 +44,12 @@ final class TvBoxConfigurationPayloadDecoder {
         } catch (IllegalArgumentException exception) {
             throw new IllegalArgumentException("配置接口返回的 Base64 数据无效", exception);
         }
+    }
+
+    static JsonElement parseLenient(String source) {
+        JsonReader reader = new JsonReader(new StringReader(source));
+        reader.setStrictness(Strictness.LENIENT);
+        return JsonParser.parseReader(reader);
     }
 
     private TvBoxConfigurationPayloadDecoder() { }

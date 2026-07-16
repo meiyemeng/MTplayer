@@ -1,6 +1,7 @@
 package cn.mtplayer.core.config;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -29,5 +30,12 @@ public final class TvBoxConfigurationPayloadDecoderTest {
                 value -> Base64.getDecoder().decode(value));
 
         assertEquals("{\"sites\":[]}", decoded);
+    }
+
+    @Test
+    public void parsesTvBoxCommentsInLenientMode() {
+        String source = "{\"sites\":[], // jar section\n\"parses\":[]}";
+
+        assertTrue(TvBoxConfigurationPayloadDecoder.parseLenient(source).isJsonObject());
     }
 }

@@ -166,14 +166,14 @@ public final class ConfigurationRepository {
         String value = TvBoxConfigurationPayloadDecoder.decode(body);
         JsonElement element;
         try {
-            element = gson.fromJson(value, JsonElement.class);
+            element = TvBoxConfigurationPayloadDecoder.parseLenient(value);
         } catch (RuntimeException exception) {
             throw new IllegalArgumentException("配置接口返回的内容不是有效 JSON", exception);
         }
         if (element != null && element.isJsonPrimitive() && element.getAsJsonPrimitive().isString()) {
             value = element.getAsString();
             try { value = new String(Base64.decode(value, Base64.DEFAULT), StandardCharsets.UTF_8); } catch (IllegalArgumentException ignored) { }
-            element = gson.fromJson(value, JsonElement.class);
+            element = TvBoxConfigurationPayloadDecoder.parseLenient(value);
         }
         if (element != null && element.isJsonObject()) {
             JsonObject object = element.getAsJsonObject();
@@ -182,7 +182,7 @@ public final class ConfigurationRepository {
                 if (wrapped != null && wrapped.isJsonPrimitive() && wrapped.getAsJsonPrimitive().isString()) {
                     String raw = wrapped.getAsString();
                     try { raw = new String(Base64.decode(raw, Base64.DEFAULT), StandardCharsets.UTF_8); } catch (IllegalArgumentException ignored) { }
-                    try { JsonElement parsed = gson.fromJson(raw, JsonElement.class); if (parsed != null && parsed.isJsonObject()) return parsed; } catch (RuntimeException ignored) { }
+                    try { JsonElement parsed = TvBoxConfigurationPayloadDecoder.parseLenient(raw); if (parsed != null && parsed.isJsonObject()) return parsed; } catch (RuntimeException ignored) { }
                 }
             }
         }
