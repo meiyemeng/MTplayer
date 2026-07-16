@@ -1,6 +1,6 @@
 # MT播放器账号与同步服务：群晖部署
 
-此服务只保存账号、设备和同步元数据，不接收、缓存或代理任何影视流。公网只需 Cloudflare Tunnel 的 HTTPS 域名，不需要群晖公网 IP，也不需要在路由器开放端口。
+此服务保存账号、设备和同步元数据，并提供同域网页播放器。为了让浏览器跨域读取用户自行添加的配置、海报和媒体，网页播放器会按需流式代理这些请求，但不会将影视内容持久化到服务器。公网只需 Cloudflare Tunnel 的 HTTPS 域名，不需要群晖公网 IP，也不需要在路由器开放端口。
 
 ## 1. 准备配置
 
@@ -33,13 +33,15 @@ docker compose ps
 若使用 GitHub Release 中已经导出的镜像 TAR，无需在群晖重新编译源码：
 
 ```sh
-docker load -i mtplayer-server-1.0.1-linux-amd64.tar
+docker load -i MTPlayer-Server-Docker-amd64-1.2.0.tar.gz
 cp env.release.example .env
 # 编辑 .env 中的三个随机密钥
 docker compose -f docker-compose.release.yml up -d
 ```
 
 默认不会映射任何宿主机端口。PostgreSQL 也只在 `mtplayer` Docker 网络内可见。首次启动会自动执行数据库迁移。
+
+容器启动后，网页客户端和后台使用同一个 Cloudflare Tunnel 域名，访问 `https://你的域名/player`。游客可以在浏览器本地添加配置、搜索和播放；注册登录后，配置源、收藏、观看进度、片头片尾与播放偏好可和其他客户端双向同步。
 
 ## 3. 连接现有 Cloudflare Tunnel
 

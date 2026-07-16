@@ -4,10 +4,10 @@
 
 ## 1. 导入镜像
 
-在群晖 Container Manager 的“映像”页面，从文件导入 `mtplayer-server-1.0.1-linux-amd64.tar`。导入后的镜像名称应为：
+在群晖 Container Manager 的“映像”页面，从文件导入 `MTPlayer-Server-Docker-amd64-1.2.0.tar.gz`。导入后的镜像名称应为：
 
 ```text
-mtplayer/server:1.0.1-amd64
+mtplayer/server:1.2.0-amd64
 ```
 
 ## 2. 新建独立数据库

@@ -51,7 +51,7 @@
             <StackPanel Orientation="Horizontal" Margin="0,15,0,0"><Button x:Name="SyncButton" Style="{StaticResource PrimaryButton}" Content="立即同步" Click="Sync_Click" IsEnabled="False"/><Button x:Name="LogoutButton" Style="{StaticResource SecondaryButton}" Margin="10,0,0,0" Content="退出账号" Click="Logout_Click" IsEnabled="False"/></StackPanel>
           </StackPanel>
         </Border>
-        <TextBlock Foreground="#666F7D" TextWrapping="Wrap" Text="隐私说明：服务器只保存账号、收藏、观看进度和设置，不接收、缓存或代理任何影视流。退出账号不会删除本地数据。"/>
+        <TextBlock Foreground="#666F7D" TextWrapping="Wrap" Text="隐私说明：桌面端播放流量不经过同步服务器；服务器保存账号、收藏、观看进度和设置。网页端为解决浏览器跨域限制会按需转发媒体但不持久化。退出账号不会删除本地数据。"/>
       </StackPanel>
     </ScrollViewer>
   </Grid>

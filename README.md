@@ -1,6 +1,6 @@
 # MT播放器
 
-MT播放器是一套不内置影视内容的多平台影视播放器与账户同步服务。当前源码包含 Windows、Android 手机、Android TV、macOS 客户端，以及可部署到群晖 Docker 的账号和同步后台。
+MT播放器是一套不内置影视内容的多平台影视播放器与账户同步服务。当前源码包含 Windows、Android 手机、Android TV、macOS 和网页客户端，以及可部署到群晖 Docker 的账号、同步与网页播放服务。
 
 ## 已交付平台
 
@@ -10,8 +10,10 @@ MT播放器是一套不内置影视内容的多平台影视播放器与账户同
 | Android 手机 | Android 8.0+ | 触屏界面、CMS 配置源、多源搜索、详情/选集、Media3 播放、收藏/历史、登录同步 |
 | Android TV | Android TV 5.0+ | Leanback 启动、遥控器焦点导航、设备码登录、详情/选集、Media3 播放；APK 使用 v1+v2 双签名兼容旧电视 |
 | macOS | macOS 10.15+，Intel x64；Apple Silicon 可使用 Rosetta 2 | Avalonia 桌面界面、CMS 配置、多源搜索、详情/选集、LibVLC 播放、收藏/历史、登录同步 |
+| 网页 | Chrome、Edge、Safari、Firefox 的现代版本 | 多配置源、Top 片单、跨源搜索、详情/选集、HLS 播放、直播、收藏/历史、注册登录与双向同步 |
 
 Android 与 macOS 客户端当前读取标准 TVBox `type=1` / CMS API；JAR/JS Spider 运行时由 Windows 客户端提供。
+网页客户端读取标准 HTTP CMS 类型（TVBox `type=1/2/4`）。依赖本机 JAR、Python 或 CSP 运行时的接口不会显示为可用网页接口，避免出现“能看到接口但无法播放”的假入口。
 
 ## 播放与资料功能
 
@@ -24,6 +26,7 @@ Android 与 macOS 客户端当前读取标准 TVBox `type=1` / CMS API；JAR/JS 
 - 游客可完整使用本地播放；登录后才启用跨设备同步
 - Android 手机配置源和直播流同时支持 `http://` 与 `https://`；账户服务器仍强制 HTTPS 以保护密码和登录令牌
 - Windows 当前配置源会在添加后、启动时和每 20 分钟自动刷新，也可在设置中立即更新
+- 网页客户端与账号服务同域部署，访问 `https://你的域名/player`；配置读取和媒体请求由服务端安全代理，解决浏览器跨域限制
 
 ## 源码结构
 
@@ -32,7 +35,7 @@ Android 与 macOS 客户端当前读取标准 TVBox `type=1` / CMS API；JAR/JS 
 - `android/mobile`：Android 手机客户端
 - `android/tv`：Android TV 客户端
 - `android/core`：Android 共用配置、CMS、搜索与账户逻辑
-- `src/MTPlayer.Server`：账户、设备码、同步与管理后台
+- `src/MTPlayer.Server`：账户、设备码、同步、网页客户端与管理后台
 - `deploy/synology`：群晖 Docker Compose、备份与恢复脚本
 - `installer`：Windows Inno Setup 安装脚本和免责声明
 - `packaging/macos`：macOS `.app` 打包脚本

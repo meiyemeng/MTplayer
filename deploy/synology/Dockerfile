@@ -3,10 +3,16 @@ WORKDIR /src
 
 COPY Directory.Build.props global.json ./
 COPY src/MTPlayer.Contracts/MTPlayer.Contracts.csproj src/MTPlayer.Contracts/
+COPY src/WebHtv.Core/WebHtv.Core.csproj src/WebHtv.Core/
+COPY src/WebHtv.Configuration/WebHtv.Configuration.csproj src/WebHtv.Configuration/
+COPY src/WebHtv.Catalogue/WebHtv.Catalogue.csproj src/WebHtv.Catalogue/
 COPY src/MTPlayer.Server/MTPlayer.Server.csproj src/MTPlayer.Server/
 RUN dotnet restore src/MTPlayer.Server/MTPlayer.Server.csproj
 
 COPY src/MTPlayer.Contracts/ src/MTPlayer.Contracts/
+COPY src/WebHtv.Core/ src/WebHtv.Core/
+COPY src/WebHtv.Configuration/ src/WebHtv.Configuration/
+COPY src/WebHtv.Catalogue/ src/WebHtv.Catalogue/
 COPY src/MTPlayer.Server/ src/MTPlayer.Server/
 RUN dotnet publish src/MTPlayer.Server/MTPlayer.Server.csproj \
     --configuration Release \

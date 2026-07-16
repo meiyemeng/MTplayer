@@ -1,0 +1,140 @@
+@page "/player"
+@attribute [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+@{
+    Layout = null;
+    ViewContext.HttpContext.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
+}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#090c10" />
+    <meta name="description" content="MT播放器网页客户端" />
+    <title>MT播放器 · 网页客户端</title>
+    <link rel="icon" href="/images/mtplayer-icon.png" />
+    <link rel="stylesheet" href="/css/web-client.css" asp-append-version="true" />
+</head>
+<body>
+<div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+        <a class="brand" href="#home" data-view="home" aria-label="MT播放器首页">
+            <img src="/images/mtplayer-icon.png" alt="" />
+            <span><strong>MT播放器</strong><small>WEB CLIENT</small></span>
+        </a>
+        <nav class="nav-list" aria-label="主导航">
+            <button class="nav-item active" data-view="home"><span>⌂</span>首页</button>
+            <button class="nav-item" data-view="search"><span>⌕</span>搜索</button>
+            <button class="nav-item" data-view="favorites"><span>♡</span>我的收藏</button>
+            <button class="nav-item" data-view="history"><span>◷</span>观看记录</button>
+            <button class="nav-item" data-view="live"><span>●</span>直播频道</button>
+            <i></i>
+            <button class="nav-item" data-view="account"><span>♙</span>账户与同步</button>
+            <button class="nav-item" data-view="settings"><span>⚙</span>设置</button>
+            <button class="nav-item" data-view="about"><span>ⓘ</span>关于软件</button>
+        </nav>
+        <div class="sidebar-foot"><span id="source-count">0 个播放接口</span><small>本地数据 · 不预置内容</small></div>
+    </aside>
+
+    <main class="main-content">
+        <header class="topbar">
+            <button class="mobile-menu" id="mobile-menu" aria-label="打开导航">☰</button>
+            <div class="page-heading"><span id="page-kicker">MT 精选</span><h1 id="page-title">热门片单</h1></div>
+            <form class="global-search" id="global-search">
+                <input id="search-input" type="search" autocomplete="off" placeholder="搜索电影、电视剧、动漫…" />
+                <button type="submit">搜索</button>
+            </form>
+            <button class="account-chip" id="account-chip" data-view="account"><i></i><span>游客模式</span></button>
+        </header>
+
+        <div class="notice-bar hidden" id="notice-bar"></div>
+
+        <section class="view active" id="view-home">
+            <article class="hero">
+                <div><span>MT WEB / 01</span><h2>今晚看点什么？</h2><p>多配置源聚合搜索，收藏与观看进度可在所有客户端之间同步。</p><div class="hero-actions"><button class="primary" data-view="settings">添加配置源</button><button data-action="refresh-home">刷新片单</button></div></div>
+                <div class="hero-signal" aria-hidden="true"><i></i><i></i><i></i></div>
+            </article>
+            <div id="home-sections" class="home-sections"></div>
+        </section>
+
+        <section class="view" id="view-search">
+            <div class="section-head"><div><span>跨接口检索</span><h2>搜索结果</h2></div><p id="search-summary">输入关键词后，将同时调用所有已启用接口。</p></div>
+            <div class="poster-grid" id="search-grid"></div>
+        </section>
+
+        <section class="view" id="view-favorites">
+            <div class="section-head"><div><span>YOUR LIBRARY</span><h2>我的收藏</h2></div><p>登录后可同步到 Windows、Android 和电视端。</p></div>
+            <div class="poster-grid" id="favorites-grid"></div>
+        </section>
+
+        <section class="view" id="view-history">
+            <div class="section-head"><div><span>CONTINUE WATCHING</span><h2>观看记录</h2></div><button class="ghost danger" data-action="clear-history">清空记录</button></div>
+            <div class="poster-grid" id="history-grid"></div>
+        </section>
+
+        <section class="view" id="view-live">
+            <div class="section-head"><div><span>LIVE & M3U8</span><h2>直播频道</h2></div><p>支持配置内直播源和自定义 HTTP/HTTPS 流。</p></div>
+            <form class="panel form-row" id="live-form"><input id="live-name" placeholder="频道名称" /><input id="live-url" type="url" placeholder="https://…/live.m3u8" required /><button class="primary" type="submit">添加并播放</button></form>
+            <div class="live-grid" id="live-grid"></div>
+        </section>
+
+        <section class="view" id="view-account">
+            <div class="section-head"><div><span>ACCOUNT & SYNC</span><h2>账户与同步</h2></div><p>网页客户端使用当前站点的同步服务器。</p></div>
+            <div class="account-layout">
+                <form class="panel account-form" id="login-form">
+                    <div class="panel-title"><div><span>SECURE ACCESS</span><h3>登录账号</h3></div><b id="login-state">未登录</b></div>
+                    <label>邮箱<input id="account-email" type="email" autocomplete="email" required /></label>
+                    <label>密码<input id="account-password" type="password" autocomplete="current-password" minlength="10" required /></label>
+                    <div class="button-row"><button class="primary" type="submit">登录并同步</button><button type="button" data-action="register">注册新账户</button><button type="button" data-action="logout">退出登录</button></div>
+                    <p class="form-hint" id="account-message">游客模式下可以浏览本地数据；网页跨域读取与云同步需要登录。</p>
+                </form>
+                <div class="panel sync-panel">
+                    <div class="panel-title"><div><span>CLOUD DATA</span><h3>手动同步</h3></div><b id="sync-state">尚未同步</b></div>
+                    <div class="sync-actions"><button class="primary" data-action="sync-all">双向同步</button><button data-action="sync-upload">上传本地数据</button><button data-action="sync-download">下载云端数据</button></div>
+                    <dl><div><dt>配置源</dt><dd id="sync-sources">0</dd></div><div><dt>收藏</dt><dd id="sync-favorites">0</dd></div><div><dt>记录</dt><dd id="sync-history">0</dd></div></dl>
+                    <p>同步范围包括配置源、收藏、观看进度、单片片头片尾和播放器偏好。退出登录不会删除本地数据。</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="view" id="view-settings">
+            <div class="section-head"><div><span>DATA SOURCES</span><h2>设置</h2></div><p>管理配置源、播放接口和播放器默认行为。</p></div>
+            <form class="panel source-form" id="source-form"><div><label>配置源名称</label><input id="source-name" placeholder="例如：我的影视仓" required /></div><div><label>TVBox 配置地址</label><input id="source-url" type="url" placeholder="http:// 或 https://" required /></div><button class="primary" type="submit">添加并启用</button></form>
+            <div class="settings-grid">
+                <div class="panel"><div class="panel-title"><div><span>CONFIG GROUPS</span><h3>配置源管理</h3></div><button data-action="refresh-sources">全部刷新</button></div><div id="source-list" class="stack-list"></div></div>
+                <div class="panel"><div class="panel-title"><div><span>PLAYBACK</span><h3>播放器设置</h3></div></div><div class="settings-fields"><label>默认倍速<select id="default-speed"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1">1.0×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2.0×</option></select></label><label>默认音量<input id="default-volume" type="range" min="0" max="100" /><output id="volume-output">80%</output></label><label>海报密度<select id="poster-density"><option value="compact">紧凑</option><option value="standard">标准</option><option value="relaxed">舒展</option></select></label></div></div>
+            </div>
+            <div class="panel interface-panel"><div class="panel-title"><div><span>INTERFACES</span><h3>片源开关</h3></div><b id="interface-summary">0 个接口</b></div><div id="interface-list" class="check-grid"></div></div>
+        </section>
+
+        <section class="view" id="view-about">
+            <article class="about-card"><img src="/images/mtplayer-icon.png" alt="MT播放器图标" /><span>MT PLAYER / WEB</span><h2>MT播放器网页客户端</h2><p>软件不预置任何影视内容、接口或直播源，仅用于播放用户自行配置且有权访问的媒体。账户服务器只保存同步数据，影视搜索与播放流不写入云端。</p><div><b>网页播放</b><b>跨端同步</b><b>多源搜索</b><b>本地优先</b></div><small>© 2026 MT播放器 · 用户应遵守所在地法律与内容授权规则。</small></article>
+        </section>
+    </main>
+</div>
+
+<dialog class="detail-dialog" id="detail-dialog">
+    <button class="dialog-close" data-action="close-detail" aria-label="关闭">×</button>
+    <div id="detail-content"></div>
+</dialog>
+
+<div class="player-layer hidden" id="player-layer">
+    <div class="player-stage" id="player-stage">
+        <video id="video" playsinline></video>
+        <div class="player-loading hidden" id="player-loading"><i></i><span>正在连接播放地址…</span></div>
+        <div class="player-chrome" id="player-chrome">
+            <div class="player-top"><div><strong id="player-title">MT播放器</strong><span id="player-subtitle"></span></div><button data-action="close-player">×</button></div>
+            <div class="player-bottom">
+                <div class="timeline"><span id="current-time">00:00</span><input id="seek" type="range" min="0" max="1000" value="0" /><span id="duration">00:00</span></div>
+                <div class="player-actions"><button data-action="prev-episode">上一集</button><button data-action="back-10">−10 秒</button><button class="primary round" data-action="toggle-play">播放</button><button data-action="forward-10">+10 秒</button><button data-action="next-episode">下一集</button><button data-action="set-intro">设片头</button><button data-action="set-outro">设片尾</button><button data-action="clear-skip">清除跳过</button><button data-action="mute">静音</button><label>音量<input id="player-volume" type="range" min="0" max="100" /></label><label>倍速<select id="player-speed"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1">1.0×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2.0×</option></select></label><button data-action="fullscreen">全屏</button></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="busy hidden" id="busy"><i></i><span>正在处理…</span></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="/js/vendor/hls.min.js"></script>
+<script src="/js/web-client.js" asp-append-version="true"></script>
+</body>
+</html>

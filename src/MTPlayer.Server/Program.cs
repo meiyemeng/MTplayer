@@ -17,6 +17,7 @@ using MTPlayer.Server.Maintenance;
 using MTPlayer.Server.Security;
 using MTPlayer.Server.Settings;
 using MTPlayer.Server.Sync;
+using MTPlayer.Server.WebClient;
 
 var builder = WebApplication.CreateBuilder(args);
 const string postgreSqlConnectionStringKey = "ConnectionStrings:PostgreSQL";
@@ -108,6 +109,19 @@ builder.Services.AddScoped<CurrentUser>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<DeviceService>();
 builder.Services.AddScoped<SyncService>();
+builder.Services.AddSingleton<WebProxySigner>();
+builder.Services.AddHttpClient<WebClientGateway>(client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(25);
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("MTPlayer-Web/1.2");
+        client.DefaultRequestHeaders.Accept.ParseAdd("application/json,text/plain,image/*,video/*,*/*");
+    })
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        AutomaticDecompression = System.Net.DecompressionMethods.All,
+        ConnectTimeout = TimeSpan.FromSeconds(10),
+    });
 builder.Services.AddScoped<KeyRotationService>();
 builder.Services.AddScoped<AdminAuthenticationService>();
 builder.Services.AddScoped<AdminCookieEvents>();
@@ -172,6 +186,8 @@ builder.Services.AddRateLimiter(options =>
     AddFixedWindowPolicy(options, builder.Configuration, "device-code", 10, TimeSpan.FromMinutes(10));
     AddFixedWindowPolicy(options, builder.Configuration, "device-poll", 120, TimeSpan.FromMinutes(10));
     AddFixedWindowPolicy(options, builder.Configuration, "device-approve", 20, TimeSpan.FromMinutes(10));
+    AddFixedWindowPolicy(options, builder.Configuration, "web-catalogue", 180, TimeSpan.FromMinutes(1));
+    AddFixedWindowPolicy(options, builder.Configuration, "web-proxy", 600, TimeSpan.FromMinutes(1));
 });
 
 var app = builder.Build();
@@ -190,6 +206,7 @@ app.MapAuthEndpoints();
 app.MapAdminEndpoints();
 app.MapDeviceEndpoints();
 app.MapSyncEndpoints();
+app.MapWebClientEndpoints();
 app.MapMtPlayerHealthChecks();
 app.MapRazorPages();
 if (command.ExportOpenApiPath is not null)
