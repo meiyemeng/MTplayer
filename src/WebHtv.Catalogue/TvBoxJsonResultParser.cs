@@ -86,10 +86,20 @@ public static class TvBoxJsonResultParser
             : new Episode(value[..separator], value[(separator + 1)..]);
     }
 
-    private static string GetString(JsonElement element, string propertyName) =>
-        element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString() ?? string.Empty
-            : string.Empty;
+    private static string GetString(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value))
+        {
+            return string.Empty;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString() ?? string.Empty,
+            JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False => value.GetRawText(),
+            _ => string.Empty
+        };
+    }
 
     private static string StripHtml(string value) => System.Text.RegularExpressions.Regex.Replace(value, "<[^>]+>", string.Empty).Trim();
 }

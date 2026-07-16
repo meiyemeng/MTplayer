@@ -82,6 +82,22 @@ try
         """);
     Require(detail.Sources.Count == 2 && detail.Sources[0].Episodes.Count == 2, "The TVBox episode sources were not parsed.");
 
+    var recordingHandler = new RecordingHandler();
+    var provider = new HttpTvBoxCatalogueProvider(new HttpClient(recordingHandler));
+    var pageWithExistingAction = await provider.SearchAsync(new WebHtv.Core.Configuration.TvBoxSite
+    {
+        Key = "existing-action",
+        RuntimeKey = "existing-action",
+        Name = "Existing action",
+        Type = 1,
+        Api = "https://example.invalid/api.php/provide/vod/?ac=list&token=preserved"
+    }, "电影", 1);
+    Require(pageWithExistingAction.Items.Count == 1, "The provider did not parse the replacement-query response.");
+    Require(recordingHandler.LastRequestUri is not null, "The provider did not issue a request.");
+    Require(recordingHandler.LastRequestUri!.Query.Contains("ac=detail", StringComparison.OrdinalIgnoreCase), "The existing action was not replaced.");
+    Require(!recordingHandler.LastRequestUri.Query.Contains("ac=list", StringComparison.OrdinalIgnoreCase), "The obsolete action remained in the query.");
+    Require(recordingHandler.LastRequestUri.Query.Contains("token=preserved", StringComparison.Ordinal), "Unrelated query parameters were not preserved.");
+
     var invalidRejected = false;
     try
     {
@@ -109,5 +125,19 @@ static void Require(bool condition, string message)
     if (!condition)
     {
         throw new InvalidOperationException(message);
+    }
+}
+
+sealed class RecordingHandler : HttpMessageHandler
+{
+    public Uri? LastRequestUri { get; private set; }
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        LastRequestUri = request.RequestUri;
+        return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent("""{"pagecount":1,"list":[{"vod_id":1,"vod_name":"电影测试"}]}""")
+        });
     }
 }

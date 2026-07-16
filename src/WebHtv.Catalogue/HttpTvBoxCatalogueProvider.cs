@@ -89,9 +89,19 @@ public sealed class HttpTvBoxCatalogueProvider(HttpClient httpClient) : ITvBoxCa
 
     private static Uri AddQueryParameters(string address, IReadOnlyDictionary<string, string> parameters)
     {
-        var separator = address.Contains('?', StringComparison.Ordinal) ? "&" : "?";
-        var query = string.Join("&", parameters.Select(pair => $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value)}"));
-        return new Uri($"{address}{separator}{query}", UriKind.Absolute);
+        var builder = new UriBuilder(address);
+        var replacementKeys = parameters.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var query = builder.Query.TrimStart('?')
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Split('=', 2))
+            .Select(parts => new KeyValuePair<string, string>(
+                Uri.UnescapeDataString(parts[0].Replace('+', ' ')),
+                parts.Length == 2 ? Uri.UnescapeDataString(parts[1].Replace('+', ' ')) : string.Empty))
+            .Where(pair => !replacementKeys.Contains(pair.Key))
+            .Concat(parameters)
+            .Select(pair => $"{Uri.EscapeDataString(pair.Key)}={Uri.EscapeDataString(pair.Value)}");
+        builder.Query = string.Join("&", query);
+        return builder.Uri;
     }
 
     private static Dictionary<string, string> ExtractHeaders(JsonElement? header)
