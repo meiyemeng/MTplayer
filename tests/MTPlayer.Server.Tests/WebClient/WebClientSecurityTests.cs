@@ -112,6 +112,32 @@ public sealed class WebClientSecurityTests
         Assert.Equal(3, handler.Attempts);
     }
 
+    [Fact]
+    public async Task Configuration_inspection_accepts_common_lenient_tvbox_json()
+    {
+        const string config = """
+            {
+              // TVBox configurations commonly contain comments.
+              "sites": [
+                { "key": "cms", "name": "宽
+            松 CMS", "type": 1, "api": "https://api.example.com/provide/vod/" },
+              ],
+            }
+            """;
+        var gateway = new WebClientGateway(
+            new HttpClient(new StaticHandler(config, "application/json")),
+            CreateSigner());
+
+        var result = await gateway.InspectAsync(
+            new WebConfigRequest(Guid.NewGuid(), "http://93.184.216.34/config.json"),
+            CancellationToken.None);
+
+        var site = Assert.Single(result.Sites);
+        Assert.Equal("https://api.example.com/provide/vod/", site.Api);
+        Assert.Contains("宽", site.Name, StringComparison.Ordinal);
+        Assert.Contains("松 CMS", site.Name, StringComparison.Ordinal);
+    }
+
     private static WebProxySigner CreateSigner()
     {
         var configuration = new ConfigurationBuilder()

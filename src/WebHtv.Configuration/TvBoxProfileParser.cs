@@ -25,7 +25,7 @@ public static class TvBoxProfileParser
 
         try
         {
-            var normalizedSourceText = TvBoxJsonNormalizer.EscapeControlCharactersInsideStrings(sourceText);
+            var normalizedSourceText = NormalizeSourceText(sourceText);
             using var document = JsonDocument.Parse(normalizedSourceText, new JsonDocumentOptions
             {
                 AllowTrailingCommas = true,
@@ -52,6 +52,18 @@ public static class TvBoxProfileParser
         {
             return new TvBoxProfileParseResult(null, [$"配置不是有效 JSON：{exception.Message}"]);
         }
+    }
+
+    /// <summary>
+    /// Makes common TVBox JSON extensions safe for System.Text.Json while
+    /// preserving the original value semantics. Comments and trailing commas
+    /// are handled by the parser options; raw control characters inside quoted
+    /// strings are escaped here.
+    /// </summary>
+    public static string NormalizeSourceText(string sourceText)
+    {
+        ArgumentNullException.ThrowIfNull(sourceText);
+        return TvBoxJsonNormalizer.EscapeControlCharactersInsideStrings(sourceText);
     }
 
     private static void ValidateUniqueSiteKeys(TvBoxProfile profile, List<string> errors)

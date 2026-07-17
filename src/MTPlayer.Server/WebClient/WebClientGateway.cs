@@ -353,7 +353,8 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
     private static string DecodeConfiguration(string value)
     {
         value = TvBoxConfigurationPayloadDecoder.Decode(value);
-        using var first = JsonDocument.Parse(value, new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
+        var normalizedValue = TvBoxProfileParser.NormalizeSourceText(value);
+        using var first = JsonDocument.Parse(normalizedValue, new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
         if (first.RootElement.ValueKind == JsonValueKind.String)
         {
             var raw = first.RootElement.GetString() ?? string.Empty;
@@ -369,7 +370,7 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
                 if (raw.TrimStart().StartsWith('{')) return raw;
             }
         }
-        return value;
+        return normalizedValue;
     }
 
     private static string? FirstAddress(string? url, string? api, JsonElement? ext)
