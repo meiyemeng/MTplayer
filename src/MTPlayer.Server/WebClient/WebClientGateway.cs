@@ -13,7 +13,12 @@ using WebHtv.Core.Configuration;
 namespace MTPlayer.Server.WebClient;
 
 public sealed record WebSiteDto(string Key, string Name, string Api);
-public sealed record WebLiveDto(string Name, string Address, string? EpgAddress = null);
+public sealed record WebLiveDto(
+    string Name,
+    string Address,
+    string? EpgAddress = null,
+    string Group = "直播",
+    string? LogoAddress = null);
 public sealed record WebConfigRequest(Guid GroupId, string Url);
 public sealed record WebConfigResponse(IReadOnlyList<WebSiteDto> Sites, IReadOnlyList<WebLiveDto> Lives);
 public sealed record WebCatalogueRequest(IReadOnlyList<WebSiteDto> Sites, string? Keyword = null, int Limit = 60);
@@ -206,12 +211,7 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
         }
 
         foreach (var live in parsed.Profile.Lives)
-        {
-            var liveAddress = FirstAddress(live.Url, live.Api, live.Ext);
-            if (liveAddress is null) continue;
-            var name = string.IsNullOrWhiteSpace(live.Name) ? $"直播源 {lives.Count + 1}" : live.Name;
-            lives[$"{name}|{liveAddress}"] = new WebLiveDto(name, liveAddress);
-        }
+            await AddLiveSourceAsync(live, lives, cancellationToken);
 
         var child = 0;
         foreach (var depot in parsed.Profile.Urls)
@@ -379,6 +379,188 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
             if (Uri.TryCreate(value, UriKind.Absolute, out var address) && IsHttp(address)) return address.ToString();
         return null;
     }
+
+    private async Task AddLiveSourceAsync(
+        TvBoxLive live,
+        Dictionary<string, WebLiveDto> lives,
+        CancellationToken cancellationToken)
+    {
+        var liveAddress = FirstAddress(live.Url, live.Api, live.Ext);
+        if (liveAddress is null) return;
+        var sourceName = string.IsNullOrWhiteSpace(live.Name) ? $"直播源 {lives.Count + 1}" : live.Name.Trim();
+        var epgTemplate = ExtensionString(live, "epg");
+        var logoTemplate = ExtensionString(live, "logo");
+
+        if (LooksLikeDirectLiveMedia(liveAddress))
+        {
+            AddLive(lives, new WebLiveDto(sourceName, liveAddress, epgTemplate, sourceName, logoTemplate));
+            return;
+        }
+
+        try
+        {
+            var address = new Uri(liveAddress);
+            using var response = await SendAsync(address, null, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            if (response.Content.Headers.ContentLength is > MaximumManifestBytes)
+                throw new InvalidDataException("直播频道清单超过 4 MiB。");
+            var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            if (bytes.Length > MaximumManifestBytes) throw new InvalidDataException("直播频道清单过大。");
+            var content = DecodeText(bytes, response.Content.Headers.ContentType?.CharSet);
+            var channels = ParseLiveChannels(content, address, sourceName);
+
+            foreach (var channel in channels.Take(2_000))
+            {
+                AddLive(lives, new WebLiveDto(
+                    channel.Name,
+                    channel.Address,
+                    ExpandLiveTemplate(epgTemplate, channel.Name),
+                    channel.Group,
+                    channel.LogoAddress ?? ExpandLiveTemplate(logoTemplate, channel.Name)));
+            }
+
+            // A direct HLS manifest has no IPTV channel entries. Keep it as one
+            // playable channel instead of presenting its media segments.
+            if (channels.Length == 0 && LooksLikeHlsManifest(content))
+                AddLive(lives, new WebLiveDto(sourceName, liveAddress, epgTemplate, sourceName, logoTemplate));
+        }
+        catch (Exception exception) when (
+            !cancellationToken.IsCancellationRequested &&
+            exception is HttpRequestException or InvalidDataException or TaskCanceledException)
+        {
+            // An unavailable remote playlist must not break the rest of the
+            // configuration import. It will be retried on the next source refresh.
+        }
+    }
+
+    private static void AddLive(Dictionary<string, WebLiveDto> lives, WebLiveDto channel) =>
+        lives[$"{channel.Name}|{channel.Address}"] = channel;
+
+    private static string? ExtensionString(TvBoxLive live, string key) =>
+        live.ExtensionData.TryGetValue(key, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static string? ExpandLiveTemplate(string? template, string channelName) =>
+        string.IsNullOrWhiteSpace(template)
+            ? null
+            : template.Replace("{name}", Uri.EscapeDataString(channelName), StringComparison.OrdinalIgnoreCase);
+
+    private static string DecodeText(byte[] bytes, string? charset)
+    {
+        if (!string.IsNullOrWhiteSpace(charset))
+        {
+            try { return Encoding.GetEncoding(charset.Trim('"')).GetString(bytes); }
+            catch (ArgumentException) { }
+        }
+        return Encoding.UTF8.GetString(bytes);
+    }
+
+    private static LiveChannel[] ParseLiveChannels(string content, Uri baseAddress, string defaultGroup)
+    {
+        var lines = content.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
+        return lines.Any(line => line.TrimStart().StartsWith("#EXTINF", StringComparison.OrdinalIgnoreCase))
+            ? ParseM3uChannels(lines, baseAddress, defaultGroup)
+            : ParseTvBoxTextChannels(lines, baseAddress, defaultGroup);
+    }
+
+    private static LiveChannel[] ParseM3uChannels(string[] lines, Uri baseAddress, string defaultGroup)
+    {
+        var channels = new List<LiveChannel>();
+        string? pendingName = null;
+        string? pendingGroup = null;
+        string? pendingLogo = null;
+
+        foreach (var raw in lines)
+        {
+            var line = raw.Trim();
+            if (line.StartsWith("#EXTINF", StringComparison.OrdinalIgnoreCase))
+            {
+                var comma = line.LastIndexOf(',');
+                pendingName = comma >= 0 ? line[(comma + 1)..].Trim() : string.Empty;
+                pendingGroup = ReadM3uAttribute(line, "group-title");
+                pendingLogo = ReadM3uAttribute(line, "tvg-logo");
+                continue;
+            }
+            if (line.Length == 0 || line.StartsWith('#') || pendingName is null) continue;
+            if (TryResolveLiveAddress(baseAddress, line, out var address))
+                channels.Add(new LiveChannel(
+                    string.IsNullOrWhiteSpace(pendingName) ? $"频道 {channels.Count + 1}" : pendingName,
+                    address,
+                    string.IsNullOrWhiteSpace(pendingGroup) ? defaultGroup : pendingGroup,
+                    ResolveOptionalAddress(baseAddress, pendingLogo)));
+            pendingName = pendingGroup = pendingLogo = null;
+        }
+        return DeduplicateLiveChannels(channels);
+    }
+
+    private static LiveChannel[] ParseTvBoxTextChannels(string[] lines, Uri baseAddress, string defaultGroup)
+    {
+        var channels = new List<LiveChannel>();
+        var group = defaultGroup;
+        foreach (var raw in lines)
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line.StartsWith('#')) continue;
+            var comma = line.IndexOf(',');
+            if (comma <= 0 || comma == line.Length - 1) continue;
+            var name = line[..comma].Trim();
+            var value = line[(comma + 1)..].Trim();
+            if (value.Equals("#genre#", StringComparison.OrdinalIgnoreCase))
+            {
+                if (name.Length > 0) group = name;
+                continue;
+            }
+
+            var variants = Regex.Split(value, "#(?=https?://)", RegexOptions.IgnoreCase);
+            var lineNumber = 0;
+            foreach (var variant in variants)
+            {
+                if (!TryResolveLiveAddress(baseAddress, variant, out var address)) continue;
+                lineNumber++;
+                channels.Add(new LiveChannel(
+                    lineNumber == 1 ? name : $"{name} · 线路 {lineNumber}",
+                    address,
+                    group,
+                    null));
+            }
+        }
+        return DeduplicateLiveChannels(channels);
+    }
+
+    private static string? ReadM3uAttribute(string line, string name)
+    {
+        var match = Regex.Match(line, $"(?:^|\\s){Regex.Escape(name)}=\\\"([^\\\"]*)\\\"", RegexOptions.IgnoreCase);
+        return match.Success ? WebUtility.HtmlDecode(match.Groups[1].Value.Trim()) : null;
+    }
+
+    private static bool TryResolveLiveAddress(Uri baseAddress, string value, out string address)
+    {
+        address = string.Empty;
+        var candidate = value.Trim().Trim('"').Split('$', 2)[0].Trim();
+        if (!Uri.TryCreate(baseAddress, candidate, out var resolved) || !IsHttp(resolved)) return false;
+        address = resolved.ToString();
+        return true;
+    }
+
+    private static string? ResolveOptionalAddress(Uri baseAddress, string? value) =>
+        !string.IsNullOrWhiteSpace(value) && Uri.TryCreate(baseAddress, value, out var resolved) && IsHttp(resolved)
+            ? resolved.ToString()
+            : null;
+
+    private static LiveChannel[] DeduplicateLiveChannels(IEnumerable<LiveChannel> channels) => channels
+        .Where(channel => !string.IsNullOrWhiteSpace(channel.Name))
+        .GroupBy(channel => $"{channel.Name}|{channel.Address}", StringComparer.OrdinalIgnoreCase)
+        .Select(group => group.First()).ToArray();
+
+    private static bool LooksLikeDirectLiveMedia(string value) =>
+        Regex.IsMatch(new Uri(value).AbsolutePath, "\\.(?:m3u8|mpd|mp4|flv|ts|aac|m4a)$", RegexOptions.IgnoreCase);
+
+    private static bool LooksLikeHlsManifest(string content) =>
+        content.Contains("#EXTM3U", StringComparison.OrdinalIgnoreCase) &&
+        content.Contains("#EXT-X-", StringComparison.OrdinalIgnoreCase);
+
+    private sealed record LiveChannel(string Name, string Address, string Group, string? LogoAddress);
 
     private static Uri AddQuery(string address, IReadOnlyDictionary<string, string> values)
     {

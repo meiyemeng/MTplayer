@@ -138,6 +138,74 @@ public sealed class WebClientSecurityTests
         Assert.Contains("松 CMS", site.Name, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Configuration_inspection_expands_tvbox_live_playlist_into_selectable_channels()
+    {
+        const string config = """
+            {
+              "lives": [{
+                "name": "电视直播",
+                "url": "http://93.184.216.34/live.txt",
+                "epg": "https://epg.example/?ch={name}",
+                "logo": "https://logo.example/{name}.png"
+              }]
+            }
+            """;
+        const string playlist = """
+            央视频道,#genre#
+            CCTV-4,http://media.example/cctv4.m3u8
+            CCTV-5,http://media.example/cctv5.m3u8
+            CCTV-6,http://media.example/cctv6-a.m3u8#http://media.example/cctv6-b.m3u8
+            """;
+        var handler = new RoutingHandler(new Dictionary<string, (string Content, string ContentType)>
+        {
+            ["/config.json"] = (config, "application/json"),
+            ["/live.txt"] = (playlist, "text/plain"),
+        });
+        var gateway = new WebClientGateway(new HttpClient(handler), CreateSigner());
+
+        var result = await gateway.InspectAsync(
+            new WebConfigRequest(Guid.NewGuid(), "http://93.184.216.34/config.json"),
+            CancellationToken.None);
+
+        Assert.Equal(4, result.Lives.Count);
+        Assert.All(result.Lives, channel => Assert.Equal("央视频道", channel.Group));
+        Assert.Contains(result.Lives, channel => channel.Name == "CCTV-4" && channel.Address.EndsWith("cctv4.m3u8", StringComparison.Ordinal));
+        Assert.Contains(result.Lives, channel => channel.Name == "CCTV-5" && channel.Address.EndsWith("cctv5.m3u8", StringComparison.Ordinal));
+        Assert.Contains(result.Lives, channel => channel.Name == "CCTV-6 · 线路 2" && channel.Address.EndsWith("cctv6-b.m3u8", StringComparison.Ordinal));
+        Assert.Contains("CCTV-4", result.Lives[0].EpgAddress, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Configuration_inspection_expands_extended_m3u_channel_metadata()
+    {
+        const string config = """
+            { "lives": [{ "name": "M3U 直播", "url": "http://93.184.216.34/live.m3u" }] }
+            """;
+        const string playlist = """
+            #EXTM3U
+            #EXTINF:-1 tvg-logo="https://logo.example/cctv4.png" group-title="央视频道",CCTV-4 中文国际
+            https://media.example/cctv4.m3u8
+            #EXTINF:-1 group-title="央视频道",CCTV-5 体育
+            https://media.example/cctv5.m3u8
+            """;
+        var handler = new RoutingHandler(new Dictionary<string, (string Content, string ContentType)>
+        {
+            ["/config.json"] = (config, "application/json"),
+            ["/live.m3u"] = (playlist, "audio/x-mpegurl"),
+        });
+        var gateway = new WebClientGateway(new HttpClient(handler), CreateSigner());
+
+        var result = await gateway.InspectAsync(
+            new WebConfigRequest(Guid.NewGuid(), "http://93.184.216.34/config.json"),
+            CancellationToken.None);
+
+        Assert.Equal(2, result.Lives.Count);
+        Assert.Equal("CCTV-4 中文国际", result.Lives[0].Name);
+        Assert.Equal("央视频道", result.Lives[0].Group);
+        Assert.Equal("https://logo.example/cctv4.png", result.Lives[0].LogoAddress);
+    }
+
     private static WebProxySigner CreateSigner()
     {
         var configuration = new ConfigurationBuilder()
@@ -171,6 +239,24 @@ public sealed class WebClientSecurityTests
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(content, Encoding.UTF8, "application/json"),
+                RequestMessage = request,
+            });
+        }
+    }
+
+    private sealed class RoutingHandler(
+        IReadOnlyDictionary<string, (string Content, string ContentType)> responses) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (!responses.TryGetValue(path, out var response))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound) { RequestMessage = request });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(response.Content, Encoding.UTF8, response.ContentType),
                 RequestMessage = request,
             });
         }

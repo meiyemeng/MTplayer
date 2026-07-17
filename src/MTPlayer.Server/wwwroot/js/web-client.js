@@ -97,6 +97,8 @@
         $("#global-search").addEventListener("submit", event => { event.preventDefault(); search($("#search-input").value); });
         $("#source-form").addEventListener("submit", addSource);
         $("#live-form").addEventListener("submit", addLive);
+        $("#live-search").addEventListener("input", renderLive);
+        $("#live-group").addEventListener("change", renderLive);
         $("#login-form").addEventListener("submit", login);
         $("#default-speed").addEventListener("change", event => setPreference("defaultSpeed", Number(event.target.value)));
         $("#poster-density").addEventListener("change", event => { document.body.dataset.density = event.target.value; setPreference("posterDensity", event.target.value); });
@@ -482,9 +484,18 @@
     function removeLive(id) { state.customLives = state.customLives.filter(item => item.id !== id); saveState(); renderLive(); }
     function renderLive() {
         const configured = state.groups.filter(group => group.isEnabled && !group.isDeleted).flatMap(group => (group.lives || []).map(item => ({ ...item, id: "", origin: group.name })));
-        const custom = state.customLives.map(item => ({ ...item, origin: "自定义" }));
+        const custom = state.customLives.map(item => ({ ...item, group: item.group || "自定义", origin: "自定义" }));
         const lives = [...custom, ...configured];
-        $("#live-grid").innerHTML = lives.length ? lives.map(item => `<article class="live-card"><div><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.origin)}</small></div><div><button class="primary" data-action="play-live" data-url="${attr(item.address)}" data-name="${attr(item.name)}">播放</button>${item.id ? `<button data-action="remove-live" data-id="${item.id}">删除</button>` : ""}</div></article>`).join("") : empty("暂无直播频道，可在上方添加 M3U8 或其他 HTTP 媒体地址。");
+        const groupSelect = $("#live-group");
+        const selectedGroup = groupSelect.value;
+        const groups = [...new Set(lives.map(item => item.group || "直播"))].sort((a, b) => a.localeCompare(b, "zh-CN"));
+        groupSelect.innerHTML = `<option value="">全部分组</option>${groups.map(group => `<option value="${attr(group)}">${escapeHtml(group)}</option>`).join("")}`;
+        groupSelect.value = groups.includes(selectedGroup) ? selectedGroup : "";
+        const keyword = $("#live-search").value.trim().toLocaleLowerCase("zh-CN");
+        const filtered = lives.filter(item => (!groupSelect.value || (item.group || "直播") === groupSelect.value) &&
+            (!keyword || `${item.name} ${item.group || ""} ${item.origin || ""}`.toLocaleLowerCase("zh-CN").includes(keyword)));
+        $("#live-count").textContent = `${filtered.length} / ${lives.length} 个频道`;
+        $("#live-grid").innerHTML = filtered.length ? filtered.map(item => `<article class="live-card"><div class="live-card-main">${item.logoAddress ? `<img src="${attr(item.logoAddress)}" alt="" loading="lazy" />` : ""}<div><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.group || "直播")} · ${escapeHtml(item.origin)}</small></div></div><div class="live-actions"><button class="primary" data-action="play-live" data-url="${attr(item.address)}" data-name="${attr(item.name)}">播放</button>${item.id ? `<button data-action="remove-live" data-id="${item.id}">删除</button>` : ""}</div></article>`).join("") : empty(lives.length ? "没有符合当前搜索或分组条件的频道。" : "暂无直播频道，请刷新配置源或在上方添加 M3U8 地址。");
     }
 
     function renderSettings() {

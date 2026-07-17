@@ -111,10 +111,16 @@ body[data-density="relaxed"] { --poster-width: 220px; }
 .panel-title h3 { margin: 4px 0 0; font-size: 21px; }
 .panel-title b { color: var(--muted); font-size: 13px; }
 .form-row { display: grid; grid-template-columns: 260px 1fr auto; gap: 12px; margin-bottom: 24px; }
+.live-toolbar { display: grid; grid-template-columns: minmax(260px, 1fr) 240px auto; gap: 12px; align-items: center; margin: 0 0 18px; }
+.live-toolbar span { color: var(--muted); white-space: nowrap; }
 .live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
 .live-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; border: 1px solid var(--line); border-radius: 15px; padding: 18px; background: var(--surface); }
+.live-card-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.live-card-main img { width: 46px; height: 46px; flex: 0 0 auto; border-radius: 12px; object-fit: contain; background: var(--surface-2); }
+.live-card-main > div { min-width: 0; }
 .live-card strong { display: block; margin-bottom: 4px; }
 .live-card small { color: var(--muted); }
+.live-actions { display: flex; gap: 7px; }
 .account-layout, .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
 .account-form label, .source-form label, .settings-fields label { display: grid; gap: 7px; color: #c9d0d8; }
 .account-form label + label { margin-top: 15px; }
@@ -212,7 +218,7 @@ body[data-density="relaxed"] { --poster-width: 220px; }
     .section-head { align-items: flex-start; flex-direction: column; }
     .section-head p { text-align: left; }
     .account-layout, .settings-grid { grid-template-columns: 1fr; }
-    .source-form, .form-row { grid-template-columns: 1fr; }
+    .source-form, .form-row, .live-toolbar { grid-template-columns: 1fr; }
     .detail-hero { grid-template-columns: 180px 1fr; gap: 24px; padding: 35px 25px; }
     .player-chrome { padding: 18px; }
     .player-actions button:nth-child(-n+2), .player-actions button:nth-child(4) { display: none; }
