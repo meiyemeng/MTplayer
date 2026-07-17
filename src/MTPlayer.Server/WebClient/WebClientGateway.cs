@@ -71,6 +71,11 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
 {
     private const int MaximumConfigurationBytes = 10 * 1024 * 1024;
     private const int MaximumManifestBytes = 4 * 1024 * 1024;
+    private static readonly TimeSpan[] SendRetryDelays =
+    [
+        TimeSpan.FromMilliseconds(200),
+        TimeSpan.FromMilliseconds(800),
+    ];
     public async Task<WebConfigResponse> InspectAsync(WebConfigRequest request, CancellationToken cancellationToken)
     {
         if (request.GroupId == Guid.Empty) throw new ArgumentException("配置源标识无效。");
@@ -246,11 +251,7 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
         for (var redirect = 0; redirect <= 5; redirect++)
         {
             await EnsurePublicAsync(current, cancellationToken);
-            using var request = new HttpRequestMessage(HttpMethod.Get, current);
-            if (!string.IsNullOrWhiteSpace(range) && RangeHeaderValue.TryParse(range, out var parsedRange)) request.Headers.Range = parsedRange;
-            request.Headers.Referrer = current.Host.EndsWith("doubanio.com", StringComparison.OrdinalIgnoreCase)
-                ? new Uri("https://movie.douban.com/") : null;
-            var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            var response = await SendWithRetryAsync(current, range, cancellationToken);
             if ((int)response.StatusCode is >= 300 and < 400 && response.Headers.Location is { } location)
             {
                 response.Dispose();
@@ -260,6 +261,32 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
             return response;
         }
         throw new HttpRequestException("远程地址重定向次数过多。");
+    }
+
+    private async Task<HttpResponseMessage> SendWithRetryAsync(
+        Uri address,
+        string? range,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, address);
+            if (!string.IsNullOrWhiteSpace(range) && RangeHeaderValue.TryParse(range, out var parsedRange))
+                request.Headers.Range = parsedRange;
+            request.Headers.Referrer = address.Host.EndsWith("doubanio.com", StringComparison.OrdinalIgnoreCase)
+                ? new Uri("https://movie.douban.com/") : null;
+            // A retry must use a fresh connection. Some Cloudflare edges reset a
+            // pooled connection without sending an HTTP response.
+            request.Headers.ConnectionClose = attempt > 0;
+            try
+            {
+                return await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            }
+            catch (HttpRequestException) when (attempt < SendRetryDelays.Length && !cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(SendRetryDelays[attempt], cancellationToken);
+            }
+        }
     }
 
     private static async Task EnsurePublicAsync(Uri address, CancellationToken cancellationToken)

@@ -94,6 +94,24 @@ public sealed class WebClientSecurityTests
         Assert.DoesNotContain("URI=\"key.bin\"", output, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Configuration_fetch_retries_transient_connection_resets_with_fresh_requests()
+    {
+        const string config = """
+            { "sites": [{ "key": "cms", "name": "CMS", "type": 1,
+              "api": "https://api.example.com/provide/vod/" }] }
+            """;
+        var handler = new ResetThenSuccessHandler(config, failures: 2);
+        var gateway = new WebClientGateway(new HttpClient(handler), CreateSigner());
+
+        var result = await gateway.InspectAsync(
+            new WebConfigRequest(Guid.NewGuid(), "http://93.184.216.34/config.json"),
+            CancellationToken.None);
+
+        Assert.Single(result.Sites);
+        Assert.Equal(3, handler.Attempts);
+    }
+
     private static WebProxySigner CreateSigner()
     {
         var configuration = new ConfigurationBuilder()
@@ -111,5 +129,24 @@ public sealed class WebClientSecurityTests
             Content = new StringContent(content, Encoding.UTF8, contentType),
             RequestMessage = request,
         });
+    }
+
+    private sealed class ResetThenSuccessHandler(string content, int failures) : HttpMessageHandler
+    {
+        public int Attempts { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Attempts++;
+            if (Attempts <= failures)
+                throw new HttpRequestException("Connection reset by peer");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(content, Encoding.UTF8, "application/json"),
+                RequestMessage = request,
+            });
+        }
     }
 }
