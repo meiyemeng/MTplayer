@@ -16,11 +16,6 @@ public sealed class SyncService(ApiDbContext db, TimeProvider timeProvider)
         SyncPushRequest request,
         CancellationToken cancellationToken)
     {
-        if (request.DeviceId != sessionId)
-        {
-            throw new SyncRequestException("device_mismatch");
-        }
-
         if (request.Mutations is null || request.Mutations.Count > SyncPayloadValidator.MaximumMutationCount)
         {
             throw new SyncRequestException("too_many_mutations");

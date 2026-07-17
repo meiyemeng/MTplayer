@@ -134,7 +134,7 @@ public sealed class SyncFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
     }
 
     [DockerFact]
-    public async Task Limits_schema_device_binding_and_user_isolation_are_enforced()
+    public async Task Limits_schema_session_binding_and_user_isolation_are_enforced()
     {
         var owner = await CreateSessionAsync("limits-owner");
         var other = await CreateSessionAsync("limits-other");
@@ -142,11 +142,14 @@ public sealed class SyncFlowTests(PostgreSqlAuthFixture fixture) : IClassFixture
         await PushAsync(owner, [Preference(id, 0, DateTimeOffset.UtcNow.AddMinutes(-1), "volume", 90)]);
         Assert.DoesNotContain((await PullAsync(other, 0, 500)).Changes, change => change.Id == id);
 
-        var mismatch = await owner.Client.PostAsJsonAsync(
+        // The authenticated session in the signed token is authoritative. Older
+        // clients persisted a local device identifier that is intentionally
+        // unrelated to the server session identifier, so the legacy request field
+        // must not prevent an otherwise valid session from synchronizing.
+        var legacyDeviceId = await owner.Client.PostAsJsonAsync(
             "/api/v1/sync/push",
             new SyncPushRequest(other.DeviceId, []));
-        Assert.Equal(HttpStatusCode.BadRequest, mismatch.StatusCode);
-        Assert.Equal("device_mismatch", await ReadProblemCodeAsync(mismatch));
+        Assert.Equal(HttpStatusCode.OK, legacyDeviceId.StatusCode);
 
         var tooMany = Enumerable.Range(0, 501)
             .Select(index => Preference(Guid.NewGuid(), 0, DateTimeOffset.UtcNow.AddMinutes(-1), $"key-{index}", index))
