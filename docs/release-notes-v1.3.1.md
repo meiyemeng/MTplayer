@@ -3,7 +3,10 @@
 ## 主要更新
 
 - Android 手机与 Android TV 新增本地 DEX/JAR `csp_*` Spider 运行时，可读取此前显示为“0 个站点可用”的 Android TVBox 配置。
+- 修复正式版 R8 裁剪 Spider、Gson、OkHttp 运行依赖的问题；`https://6800.kstore.vip/fish.json` 已完成清空数据后的首次搜索、详情和播放验证。
+- Spider JAR 使用独立的首次下载超时，86 站点并发搜索改为统一截止时间，避免首次导入时长时间无结果。
 - Android 设置页新增带随机令牌认证的局域网 Spider Gateway；Windows 与群晖网页端可连接网关，调用同一批 Android 专用站点。
+- 修复 Windows/网页端向 Android Gateway 传递 `searchable` 类型不兼容、异常时连接被提前关闭的问题。
 - Spider Gateway 已完成真实配置搜索、详情、选集和播放地址解析验证；无效请求会立即返回 400，不再长时间卡住。
 - 新增解析器网页播放通道：Spider 返回 `parse=1` 时，Android 使用内置全屏 WebView，Windows 使用 WebView2，网页端打开独立解析页。
 - 修复网页服务器依赖注入构造函数冲突造成的 500 错误。

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using MTPlayer.Server.WebClient;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using Xunit;
 
 namespace MTPlayer.Server.Tests.WebClient;
@@ -175,6 +176,7 @@ public sealed class WebClientSecurityTests
         Assert.True(playback.RequiresParser);
         Assert.Equal("https://parser.example/?url=episode-1", playback.Url);
         Assert.Equal("Bearer test-token", handler.LastAuthorization);
+        Assert.Equal(JsonValueKind.True, handler.LastSearchableKind);
     }
 
     [Fact]
@@ -359,6 +361,7 @@ public sealed class WebClientSecurityTests
     private sealed class SpiderGatewayHandler(string configuration) : HttpMessageHandler
     {
         public string? LastAuthorization { get; private set; }
+        public JsonValueKind? LastSearchableKind { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -366,6 +369,14 @@ public sealed class WebClientSecurityTests
                 return Json(configuration, request);
 
             LastAuthorization = request.Headers.Authorization?.ToString();
+            if (request.Content is not null)
+            {
+                var payload = request.Content.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult();
+                using var document = JsonDocument.Parse(payload);
+                if (document.RootElement.TryGetProperty("site", out var site) &&
+                    site.TryGetProperty("searchable", out var searchable))
+                    LastSearchableKind = searchable.ValueKind;
+            }
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
             var body = path.EndsWith("/search", StringComparison.Ordinal) ? """
                 {"list":[{"vod_id":"main:1","vod_name":"仙逆","vod_pic":"https://image.example/poster.jpg"}]}

@@ -72,7 +72,7 @@ public sealed class SpiderGatewayProvider(HttpClient httpClient) : ITvBoxCatalog
                 type = site.Type,
                 jar = site.Jar,
                 ext = site.Ext,
-                searchable = site.Searchable ?? 1,
+                searchable = (site.Searchable ?? 1) != 0,
             }
         };
         foreach (var property in values.GetType().GetProperties()) payload[property.Name] = property.GetValue(values);

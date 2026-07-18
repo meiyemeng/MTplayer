@@ -492,7 +492,7 @@ public sealed class WebClientGateway
                 type = 3,
                 jar = site.Jar,
                 ext = site.Ext,
-                searchable = site.Searchable ? 1 : 0,
+                searchable = site.Searchable,
             }
         };
         foreach (var property in values.GetType().GetProperties()) payload[property.Name] = property.GetValue(values);

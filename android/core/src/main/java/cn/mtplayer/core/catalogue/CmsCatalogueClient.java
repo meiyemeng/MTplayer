@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorCompletionService;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -55,33 +56,60 @@ public final class CmsCatalogueClient {
 
     public List<MediaItem> searchAll(List<Site> sites, String keyword) {
         if (sites.isEmpty() || keyword == null || keyword.trim().isEmpty()) return Collections.emptyList();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.min(8, sites.size()));
-        List<Future<List<MediaItem>>> futures = new ArrayList<>();
-        for (Site site : sites) if (site.searchable) futures.add(pool.submit(() -> query(site, keyword.trim(), false)));
+        ExecutorService pool = Executors.newFixedThreadPool(Math.min(24, sites.size()));
+        ExecutorCompletionService<List<MediaItem>> completion = new ExecutorCompletionService<>(pool);
+        int submitted = 0;
+        for (Site site : sites) if (site.searchable) {
+            completion.submit(() -> query(site, keyword.trim(), false));
+            submitted++;
+        }
         Map<String, MediaItem> merged = new LinkedHashMap<>();
-        for (Future<List<MediaItem>> future : futures) {
-            try {
-                for (MediaItem item : future.get(13, TimeUnit.SECONDS)) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(22);
+        try {
+            for (int completed = 0; completed < submitted; completed++) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) break;
+                Future<List<MediaItem>> future = completion.poll(remaining, TimeUnit.NANOSECONDS);
+                if (future == null) break;
+                try {
+                    for (MediaItem item : future.get()) {
                     String key = normalize(item.name) + "|" + (item.year == null ? "" : item.year);
                     merged.putIfAbsent(key + "|" + item.siteKey, item);
+                    }
+                } catch (Exception ignored) {
+                    // A single optional source must not hide results from sources
+                    // that completed successfully.
                 }
-            } catch (Exception ignored) { future.cancel(true); }
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        } finally {
+            pool.shutdownNow();
         }
-        pool.shutdownNow();
         return new ArrayList<>(merged.values());
     }
 
     public List<MediaItem> latest(List<Site> sites, int limit) {
         if (sites.isEmpty()) return Collections.emptyList();
-        ExecutorService pool = Executors.newFixedThreadPool(Math.min(6, sites.size()));
-        List<Future<List<MediaItem>>> futures = new ArrayList<>();
-        for (Site site : sites.subList(0, Math.min(12, sites.size()))) futures.add(pool.submit(() -> query(site, null, true)));
+        int sourceCount = Math.min(12, sites.size());
+        ExecutorService pool = Executors.newFixedThreadPool(Math.min(12, sourceCount));
+        ExecutorCompletionService<List<MediaItem>> completion = new ExecutorCompletionService<>(pool);
+        for (Site site : sites.subList(0, sourceCount)) completion.submit(() -> query(site, null, true));
         List<MediaItem> result = new ArrayList<>();
-        for (Future<List<MediaItem>> future : futures) {
-            try { result.addAll(future.get(13, TimeUnit.SECONDS)); } catch (Exception ignored) { future.cancel(true); }
-            if (result.size() >= limit) break;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        try {
+            for (int completed = 0; completed < sourceCount && result.size() < limit; completed++) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) break;
+                Future<List<MediaItem>> future = completion.poll(remaining, TimeUnit.NANOSECONDS);
+                if (future == null) break;
+                try { result.addAll(future.get()); } catch (Exception ignored) { }
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        } finally {
+            pool.shutdownNow();
         }
-        pool.shutdownNow();
         return result.subList(0, Math.min(limit, result.size()));
     }
 

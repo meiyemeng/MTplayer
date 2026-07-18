@@ -4,7 +4,9 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -94,43 +96,55 @@ public final class SpiderGatewayServer {
         try (socket;
              BufferedInputStream input = new BufferedInputStream(socket.getInputStream());
              BufferedOutputStream output = new BufferedOutputStream(socket.getOutputStream())) {
-            String requestLine = readLine(input);
-            if (requestLine == null) return;
-            String[] requestParts = requestLine.split(" ", 3);
-            if (requestParts.length < 2 || !"POST".equals(requestParts[0])) { write(output, 405, error("只支持 POST 请求")); return; }
-            int length = 0;
-            String authorization = "";
-            for (String line; (line = readLine(input)) != null && !line.isEmpty(); ) {
-                int split = line.indexOf(':');
-                if (split < 0) continue;
-                String name = line.substring(0, split).trim().toLowerCase(Locale.ROOT);
-                String value = line.substring(split + 1).trim();
-                if ("content-length".equals(name)) {
-                    try { length = Integer.parseInt(value); }
-                    catch (NumberFormatException error) { write(output, 400, error("无效的 Content-Length")); return; }
-                }
-                if ("authorization".equals(name)) authorization = value;
-            }
-            if (!authorization.equals("Bearer " + token())) { write(output, 401, error("Gateway 令牌无效")); return; }
-            if (length < 0 || length > MAX_BODY_BYTES) { write(output, 413, error("请求内容过大")); return; }
-            byte[] body = readExactly(input, length);
-            if (body.length != length) { write(output, 400, error("请求内容不完整")); return; }
-            int bodyOffset = body.length >= 3 && (body[0] & 0xff) == 0xef && (body[1] & 0xff) == 0xbb && (body[2] & 0xff) == 0xbf ? 3 : 0;
-            GatewayRequest request = gson.fromJson(new String(body, bodyOffset, body.length - bodyOffset, StandardCharsets.UTF_8), GatewayRequest.class);
-            if (request == null || request.site == null || !request.site.isCsp()) { write(output, 400, error("缺少有效的 CSP 站点")); return; }
-            JsonObject result;
-            String path = requestParts[1];
-            if (path.endsWith("/home")) result = runtime.home(request.site);
-            else if (path.endsWith("/search")) result = runtime.search(request.site, request.keyword == null ? "" : request.keyword);
-            else if (path.endsWith("/detail")) result = runtime.detail(request.site, request.id == null ? "" : request.id);
-            else if (path.endsWith("/player")) result = runtime.player(request.site, request.flag, request.id == null ? "" : request.id);
-            else { write(output, 404, error("未知的 Gateway 方法")); return; }
-            write(output, 200, result.toString());
-        } catch (Exception error) {
             try {
-                BufferedOutputStream output = new BufferedOutputStream(socket.getOutputStream());
+                String requestLine = readLine(input);
+                if (requestLine == null) return;
+                String[] requestParts = requestLine.split(" ", 3);
+                if (requestParts.length < 2 || !"POST".equals(requestParts[0])) { write(output, 405, error("只支持 POST 请求")); return; }
+                int length = 0;
+                String authorization = "";
+                for (String line; (line = readLine(input)) != null && !line.isEmpty(); ) {
+                    int split = line.indexOf(':');
+                    if (split < 0) continue;
+                    String name = line.substring(0, split).trim().toLowerCase(Locale.ROOT);
+                    String value = line.substring(split + 1).trim();
+                    if ("content-length".equals(name)) {
+                        try { length = Integer.parseInt(value); }
+                        catch (NumberFormatException error) { write(output, 400, error("无效的 Content-Length")); return; }
+                    }
+                    if ("authorization".equals(name)) authorization = value;
+                }
+                if (!authorization.equals("Bearer " + token())) { write(output, 401, error("Gateway 令牌无效")); return; }
+                if (length < 0 || length > MAX_BODY_BYTES) { write(output, 413, error("请求内容过大")); return; }
+                byte[] body = readExactly(input, length);
+                if (body.length != length) { write(output, 400, error("请求内容不完整")); return; }
+                int bodyOffset = body.length >= 3 && (body[0] & 0xff) == 0xef && (body[1] & 0xff) == 0xbb && (body[2] & 0xff) == 0xbf ? 3 : 0;
+                JsonObject payload = JsonParser.parseString(new String(body, bodyOffset, body.length - bodyOffset, StandardCharsets.UTF_8)).getAsJsonObject();
+                JsonObject sitePayload = payload.has("site") && payload.get("site").isJsonObject() ? payload.getAsJsonObject("site") : null;
+                // v1.3.1 Windows/server clients encoded searchable as TVBox's
+                // conventional 0/1 number, while the Android model is boolean.
+                // Accept both wire formats so existing desktop installs work.
+                if (sitePayload != null && sitePayload.has("searchable")) {
+                    JsonElement searchable = sitePayload.get("searchable");
+                    if (searchable.isJsonPrimitive() && searchable.getAsJsonPrimitive().isNumber())
+                        sitePayload.addProperty("searchable", searchable.getAsInt() != 0);
+                }
+                GatewayRequest request = gson.fromJson(payload, GatewayRequest.class);
+                if (request == null || request.site == null || !request.site.isCsp()) { write(output, 400, error("缺少有效的 CSP 站点")); return; }
+                JsonObject result;
+                String path = requestParts[1];
+                if (path.endsWith("/home")) result = runtime.home(request.site);
+                else if (path.endsWith("/search")) result = runtime.search(request.site, request.keyword == null ? "" : request.keyword);
+                else if (path.endsWith("/detail")) result = runtime.detail(request.site, request.id == null ? "" : request.id);
+                else if (path.endsWith("/player")) result = runtime.player(request.site, request.flag, request.id == null ? "" : request.id);
+                else { write(output, 404, error("未知的 Gateway 方法")); return; }
+                write(output, 200, result.toString());
+            } catch (Exception error) {
+                android.util.Log.e("MTPlayer-Gateway", "Spider request failed", error);
                 write(output, 500, error("Spider 执行失败：" + message(error)));
-            } catch (IOException ignored) { }
+            }
+        } catch (IOException error) {
+            android.util.Log.w("MTPlayer-Gateway", "Gateway connection failed: " + message(error), error);
         }
     }
 

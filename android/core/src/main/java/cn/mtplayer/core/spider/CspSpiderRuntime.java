@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 import cn.mtplayer.core.model.Site;
 import dalvik.system.DexClassLoader;
@@ -34,6 +35,7 @@ public final class CspSpiderRuntime {
     private static final long MAX_JAR_BYTES = 64L * 1024 * 1024;
     private final Context context;
     private final OkHttpClient http;
+    private final OkHttpClient jarHttp;
     private final File root;
     private final Map<String, DexClassLoader> loaders = new ConcurrentHashMap<>();
     private final Map<String, Object> spiders = new ConcurrentHashMap<>();
@@ -41,6 +43,11 @@ public final class CspSpiderRuntime {
     public CspSpiderRuntime(Context context, OkHttpClient http) {
         this.context = context.getApplicationContext();
         this.http = http;
+        this.jarHttp = http.newBuilder()
+                .connectTimeout(20, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .callTimeout(75, TimeUnit.SECONDS)
+                .build();
         this.root = new File(context.getCodeCacheDir(), "mtplayer-spider");
         if (!root.exists() && !root.mkdirs()) throw new IllegalStateException("无法创建 Spider 缓存目录");
     }
@@ -139,7 +146,7 @@ public final class CspSpiderRuntime {
     private void downloadJar(String address, File target) throws IOException {
         Request request = new Request.Builder().url(address).header("User-Agent", "MTPlayer/1.3.1 Android").build();
         File temporary = new File(target.getAbsolutePath() + ".download");
-        try (Response response = http.newCall(request).execute()) {
+        try (Response response = jarHttp.newCall(request).execute()) {
             if (!response.isSuccessful() || response.body() == null) throw new IOException("Spider JAR 下载失败：HTTP " + response.code());
             if (response.body().contentLength() > MAX_JAR_BYTES) throw new IOException("Spider JAR 超过 64 MiB");
             long total = 0;
@@ -162,7 +169,7 @@ public final class CspSpiderRuntime {
     }
 
     private String downloadText(String address) throws IOException {
-        try (Response response = http.newCall(new Request.Builder().url(address).build()).execute()) {
+        try (Response response = jarHttp.newCall(new Request.Builder().url(address).build()).execute()) {
             if (!response.isSuccessful() || response.body() == null) throw new IOException("MD5 地址读取失败");
             return response.body().string();
         }
