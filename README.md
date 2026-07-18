@@ -12,8 +12,8 @@ MT播放器是一套不内置影视内容的多平台影视播放器与账户同
 | macOS | macOS 10.15+，Intel x64；Apple Silicon 可使用 Rosetta 2 | Avalonia 桌面界面、CMS 配置、多源搜索、详情/选集、LibVLC 播放、收藏/历史、登录同步 |
 | 网页 | Chrome、Edge、Safari、Firefox 的现代版本 | 多配置源、Top 片单、跨源搜索、详情/选集、HLS 播放、直播、收藏/历史、注册登录与双向同步 |
 
-Android 与 macOS 客户端当前读取标准 TVBox `type=1` / CMS API；JAR/JS Spider 运行时由 Windows 客户端提供。
-网页客户端读取标准 HTTP CMS 类型（TVBox `type=1/2/4`）。依赖本机 JAR、Python 或 CSP 运行时的接口不会显示为可用网页接口，避免出现“能看到接口但无法播放”的假入口。
+Android 手机与 Android TV 既可读取标准 TVBox HTTP/CMS 接口，也可在设备本地运行 Android DEX/JAR `csp_*` Spider。Windows 和网页客户端除自身支持的 HTTP/CMS 接口外，还可连接同一局域网内 Android 客户端提供的 Spider Gateway，调用这些 Android 专用站点。
+macOS 客户端当前读取标准 TVBox `type=1` / CMS API。Python Spider、仅原生 ARM 库可运行的 Spider，以及不兼容当前设备 CPU 的第三方插件仍会被明确标记为不可用，不会伪装成可播放接口。
 
 ## 播放与资料功能
 
@@ -27,6 +27,7 @@ Android 与 macOS 客户端当前读取标准 TVBox `type=1` / CMS API；JAR/JS 
 - Android 手机配置源和直播流同时支持 `http://` 与 `https://`；账户服务器仍强制 HTTPS 以保护密码和登录令牌
 - Windows 当前配置源会在添加后、启动时和每 20 分钟自动刷新，也可在设置中立即更新
 - 网页客户端与账号服务同域部署，访问 `https://你的域名/player`；配置读取和媒体请求由服务端安全代理，解决浏览器跨域限制
+- Android 设置页可开启“Spider Gateway”，Windows 设置页或服务器 Compose 填入设备局域网地址与随机令牌后，可搜索、读取详情并播放 Android DEX/JAR `csp_*` 站点
 
 ## 源码结构
 
@@ -58,6 +59,8 @@ cd android
 .\gradlew.bat :core:test :mobile:assembleDebug :tv:assembleDebug
 ```
 
+在 Android 手机或电视设置页开启 Spider Gateway 后，记下显示的端口和令牌。Windows 直接填写 `http://安卓设备局域网IP:9978`；群晖网页端在 `.env` 中填写 `SPIDER_GATEWAY_URL` 和 `SPIDER_GATEWAY_TOKEN`。网关默认关闭，只监听局域网并强制令牌认证；请勿直接暴露到公网。
+
 如果电视上已有签名不同但包名相同的旧版，可构建独立包名的共存版，避免卸载旧应用：
 
 ```powershell
@@ -84,7 +87,7 @@ http://mt-api:8080
 
 后台用户管理会显示最近登录 IP、所在城市，以及用户保存的配置源、影视接口和直播接口数量与地址。Cloudflare Tunnel 建议开启“添加访问者位置标头”托管转换，以便服务直接读取 `CF-IPCity`；未提供该标头时，服务会对公网 IP 使用可配置的地理位置服务兜底查询。
 
-v1.3.0 预留会员统一推送接口：管理员可通过 `/api/v1/admin/members/{userId}` 设置 `free`、`member`、`vip` 等级，通过 `/api/v1/admin/member-pushes` 管理配置源与直播源推送；登录客户端通过 `/api/v1/member/pushes` 获取当前等级可见内容。
+v1.3.1 保留会员统一推送接口：管理员可通过 `/api/v1/admin/members/{userId}` 设置 `free`、`member`、`vip` 等级，通过 `/api/v1/admin/member-pushes` 管理配置源与直播源推送；登录客户端通过 `/api/v1/member/pushes` 获取当前等级可见内容。
 
 ## 内容、版权与许可证
 

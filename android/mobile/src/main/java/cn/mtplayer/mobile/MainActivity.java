@@ -111,13 +111,31 @@ public final class MainActivity extends AppCompatActivity {
     private void runSyncInBackground(TextView status,int mode){try{AndroidSyncService.Result result=mode==1?sync.upload():mode==2?sync.download():sync.synchronize();runOnUiThread(()->status.setText("同步完成：上传 "+result.pushed+" 项，下载 "+result.pulled+" 项。"));}catch(Exception ex){runOnUiThread(()->status.setText("同步失败："+message(ex)));}}
 
     private void showSettings(){
-        ScrollView scroll=new ScrollView(this);LinearLayout root=page("数据来源","配置源管理");root.addView(Ui.text(this,"支持 HTTP/HTTPS，可添加多个 TVBox 单仓或接口组；启用的配置会共同参与搜索。"),Ui.matchWrap());Button add=Ui.button(this,"＋ 添加配置源",true);root.addView(add,Ui.matchWrap());for(SourceGroup group:AppServices.configurations.groups()){LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);Button toggle=Ui.button(this,(group.enabled?"✓ ":"○ ")+group.name,false);Button remove=Ui.button(this,"删除",false);toggle.setOnClickListener(v->{AppServices.configurations.setEnabled(group.id,!group.enabled);showSettings();});remove.setOnClickListener(v->{AppServices.configurations.remove(group.id);showSettings();});row.addView(toggle,new LinearLayout.LayoutParams(0,Ui.dp(this,56),1));row.addView(remove,new LinearLayout.LayoutParams(Ui.dp(this,82),Ui.dp(this,56)));root.addView(row,Ui.matchWrap());root.addView(Ui.text(this,group.url),Ui.matchWrap());}TextView about=Ui.text(this,"MT播放器 1.3.0\n软件不预置任何内容源，仅播放用户自行配置且有权访问的内容。用户应遵守所在地法律及内容授权规则。\n\n源码与下载：https://github.com/meiyemeng/MTplayer/releases/latest");about.setPadding(0,Ui.dp(this,28),0,Ui.dp(this,20));root.addView(about,Ui.matchWrap());add.setOnClickListener(v->sourceDialog());scroll.addView(root);setPage(scroll);
+        ScrollView scroll=new ScrollView(this);LinearLayout root=page("数据来源","配置源管理");
+        root.addView(Ui.text(this,"支持 HTTP/HTTPS，可添加多个 TVBox 单仓或接口组；启用的配置会共同参与搜索。"),Ui.matchWrap());
+        Button add=Ui.button(this,"＋ 添加配置源",true);root.addView(add,Ui.matchWrap());
+        for(SourceGroup group:AppServices.configurations.groups()){
+            LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);
+            Button toggle=Ui.button(this,(group.enabled?"✓ ":"○ ")+group.name,false);Button remove=Ui.button(this,"删除",false);
+            toggle.setOnClickListener(v->{AppServices.configurations.setEnabled(group.id,!group.enabled);showSettings();});
+            remove.setOnClickListener(v->{AppServices.configurations.remove(group.id);showSettings();});
+            row.addView(toggle,new LinearLayout.LayoutParams(0,Ui.dp(this,56),1));row.addView(remove,new LinearLayout.LayoutParams(Ui.dp(this,82),Ui.dp(this,56)));
+            root.addView(row,Ui.matchWrap());root.addView(Ui.text(this,group.url),Ui.matchWrap());
+        }
+        root.addView(Ui.title(this,"Spider Gateway",20),Ui.matchWrap());
+        Button gateway=Ui.button(this,AppServices.spiderGateway.isEnabled()?"关闭局域网 Gateway":"启用局域网 Gateway",AppServices.spiderGateway.isEnabled());
+        root.addView(gateway,Ui.matchWrap());
+        root.addView(Ui.text(this,"供 Windows/Web 调用 Android CSP 插件。端口："+AppServices.spiderGateway.port()+"\n令牌："+AppServices.spiderGateway.token()+"\n仅在可信局域网使用。"),Ui.matchWrap());
+        gateway.setOnClickListener(v->{try{AppServices.spiderGateway.setEnabled(!AppServices.spiderGateway.isEnabled());showSettings();}catch(Exception ex){toast(message(ex));}});
+        TextView about=Ui.text(this,"MT播放器 1.3.1\n软件不预置任何内容源，仅播放用户自行配置且有权访问的内容。用户应遵守所在地法律及内容授权规则。\n\n源码与下载：https://github.com/meiyemeng/MTplayer/releases/latest");
+        about.setPadding(0,Ui.dp(this,28),0,Ui.dp(this,20));root.addView(about,Ui.matchWrap());
+        add.setOnClickListener(v->sourceDialog());scroll.addView(root);setPage(scroll);
     }
 
     private void showAbout(){
         ScrollView scroll=new ScrollView(this);LinearLayout root=page("ABOUT MT PLAYER","关于软件");
         ImageView logo=new ImageView(this);logo.setScaleType(ImageView.ScaleType.CENTER_INSIDE);Glide.with(this).load(R.drawable.logo_header).into(logo);root.addView(logo,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,100)));
-        root.addView(Ui.title(this,"MT播放器 Android · 1.3.0",22),Ui.matchWrap());
+        root.addView(Ui.title(this,"MT播放器 Android · 1.3.1",22),Ui.matchWrap());
         root.addView(Ui.text(this,"源码仓库：https://github.com/meiyemeng/MTplayer\n客户端下载：https://github.com/meiyemeng/MTplayer/releases/latest\n\n软件不预置、不存储、不上传、不分发任何影视内容，仅播放用户自行配置且有权访问的媒体。"),Ui.matchWrap());
         root.addView(Ui.title(this,"支持项目",20),Ui.matchWrap());
         ImageView donate=new ImageView(this);donate.setScaleType(ImageView.ScaleType.CENTER_INSIDE);Glide.with(this).load(R.drawable.alipay_donate).into(donate);root.addView(donate,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,430)));

@@ -22,6 +22,8 @@ public static class WebClientEndpoints
             await ExecuteAsync(() => gateway.SearchAsync(request, ct)));
         web.MapPost("/catalogue/detail", async (WebDetailRequest request, WebClientGateway gateway, CancellationToken ct) =>
             await ExecuteAsync(() => gateway.DetailAsync(request, ct)));
+        web.MapPost("/catalogue/player", async (WebPlayRequest request, WebClientGateway gateway, CancellationToken ct) =>
+            await ExecuteAsync(() => gateway.PlayAsync(request, ct)));
         web.MapPost("/media/sign", (WebSignRequest request, WebClientGateway gateway) =>
         {
             try { return Results.Ok(new { url = gateway.SignMedia(request.Url) }); }

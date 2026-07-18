@@ -14,6 +14,8 @@ internal sealed class AppSettings
     public bool AutoFullscreen { get; set; }
     public bool UseSourceCovers { get; set; } = true;
     public string TmdbApiKey { get; set; } = string.Empty;
+    public string SpiderGatewayUrl { get; set; } = string.Empty;
+    public string SpiderGatewayToken { get; set; } = string.Empty;
     public List<string> DisabledSiteKeys { get; set; } = [];
     public List<ConfigurationSourceEntry> ConfigurationSources { get; set; } = [];
     public string ActiveConfigurationSourceId { get; set; } = string.Empty;
@@ -59,6 +61,8 @@ internal sealed class AppSettingsStore : IDisposable
             AutoFullscreen = settings.AutoFullscreen,
             UseSourceCovers = settings.UseSourceCovers,
             TmdbApiKey = settings.TmdbApiKey,
+            SpiderGatewayUrl = settings.SpiderGatewayUrl,
+            SpiderGatewayToken = settings.SpiderGatewayToken,
             DisabledSiteKeys = [.. settings.DisabledSiteKeys],
             ConfigurationSources = groups.Select(item => new ConfigurationSourceEntry
             {
@@ -90,6 +94,8 @@ internal sealed class AppSettingsStore : IDisposable
         core.AutoFullscreen = settings.AutoFullscreen;
         core.UseSourceCovers = settings.UseSourceCovers;
         core.TmdbApiKey = settings.TmdbApiKey;
+        core.SpiderGatewayUrl = settings.SpiderGatewayUrl;
+        core.SpiderGatewayToken = settings.SpiderGatewayToken;
         core.DisabledSiteKeys = [.. settings.DisabledSiteKeys];
         var existingGroups = core.ConfigurationGroups.ToDictionary(item => item.Id);
         var activeGroups = settings.ConfigurationSources.Select(item =>

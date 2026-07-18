@@ -142,6 +142,42 @@ public sealed class WebClientSecurityTests
     }
 
     [Fact]
+    public async Task Android_spider_gateway_exposes_csp_search_detail_and_parser_playback()
+    {
+        const string config = """
+            {
+              "spider": "https://cdn.example/runtime.jar;md5;0123456789abcdef0123456789abcdef",
+              "sites": [{ "key": "video", "name": "Android Spider", "type": 3,
+                "api": "csp_VideoX", "searchable": 1 }]
+            }
+            """;
+        var handler = new SpiderGatewayHandler(config);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["SPIDER_GATEWAY_URL"] = "http://gateway.example:9978",
+            ["SPIDER_GATEWAY_TOKEN"] = "test-token",
+        }).Build();
+        var gateway = new WebClientGateway(new HttpClient(handler), CreateSigner(), configuration);
+
+        var inspected = await gateway.InspectAsync(
+            new WebConfigRequest(Guid.NewGuid(), "http://93.184.216.34/config.json"),
+            CancellationToken.None);
+        var site = Assert.Single(inspected.Sites);
+        Assert.Equal(3, site.Type);
+        Assert.Equal("csp_VideoX", site.Api);
+
+        var search = await gateway.SearchAsync(new WebCatalogueRequest([site], "仙逆", 20), CancellationToken.None);
+        Assert.Equal("仙逆", Assert.Single(search).Title);
+        var detail = await gateway.DetailAsync(new WebDetailRequest(site, "main:1"), CancellationToken.None);
+        var episode = Assert.Single(Assert.Single(detail.Sources).Episodes);
+        Assert.True(episode.RequiresSpider);
+        var playback = await gateway.PlayAsync(new WebPlayRequest(site, "线路", episode.Url), CancellationToken.None);
+        Assert.True(playback.RequiresParser);
+        Assert.Equal("https://parser.example/?url=episode-1", playback.Url);
+        Assert.Equal("Bearer test-token", handler.LastAuthorization);
+    }
+
+    [Fact]
     public async Task Configuration_inspection_expands_tvbox_live_playlist_into_selectable_channels()
     {
         const string config = """
@@ -318,5 +354,34 @@ public sealed class WebClientSecurityTests
                 RequestMessage = request,
             });
         }
+    }
+
+    private sealed class SpiderGatewayHandler(string configuration) : HttpMessageHandler
+    {
+        public string? LastAuthorization { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri?.AbsolutePath == "/config.json")
+                return Json(configuration, request);
+
+            LastAuthorization = request.Headers.Authorization?.ToString();
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            var body = path.EndsWith("/search", StringComparison.Ordinal) ? """
+                {"list":[{"vod_id":"main:1","vod_name":"仙逆","vod_pic":"https://image.example/poster.jpg"}]}
+                """ : path.EndsWith("/detail", StringComparison.Ordinal) ? """
+                {"list":[{"vod_id":"main:1","vod_name":"仙逆","vod_play_from":"线路","vod_play_url":"第01集$episode-1"}]}
+                """ : path.EndsWith("/player", StringComparison.Ordinal) ? """
+                {"parse":1,"url":"https://parser.example/?url=episode-1"}
+                """ : "{}";
+            return Json(body, request);
+        }
+
+        private static Task<HttpResponseMessage> Json(string body, HttpRequestMessage request) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+                RequestMessage = request,
+            });
     }
 }

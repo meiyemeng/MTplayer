@@ -33,7 +33,7 @@ docker compose ps
 若使用 GitHub Release 中已经导出的镜像 TAR，无需在群晖重新编译源码：
 
 ```sh
-docker load -i MTPlayer-Server-Docker-amd64-1.3.0.tar.gz
+docker load -i MTPlayer-Server-Docker-amd64-1.3.1.tar.gz
 cp env.release.example .env
 # 编辑 .env 中的三个随机密钥
 docker compose -f docker-compose.release.yml up -d

@@ -10,6 +10,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MTPlayer"
         android:usesCleartextTraffic="true">
+        <activity android:name="cn.mtplayer.core.player.WebParserActivity" android:configChanges="orientation|screenSize" android:screenOrientation="sensorLandscape" />
         <activity android:name=".PlayerActivity" android:configChanges="orientation|screenSize" android:screenOrientation="sensorLandscape" />
         <activity android:name=".DetailActivity" />
         <activity android:name=".MainActivity" android:exported="true">

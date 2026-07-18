@@ -12,7 +12,14 @@ using WebHtv.Core.Configuration;
 
 namespace MTPlayer.Server.WebClient;
 
-public sealed record WebSiteDto(string Key, string Name, string Api);
+public sealed record WebSiteDto(
+    string Key,
+    string Name,
+    string Api,
+    int Type = 1,
+    string? Jar = null,
+    JsonElement? Ext = null,
+    bool Searchable = true);
 public sealed record WebLiveDto(
     string Name,
     string Address,
@@ -29,8 +36,14 @@ public sealed record WebConfigResponse(
     int RuntimeRequiredSiteCount = 0);
 public sealed record WebCatalogueRequest(IReadOnlyList<WebSiteDto> Sites, string? Keyword = null, int Limit = 60);
 public sealed record WebDetailRequest(WebSiteDto Site, string Id);
+public sealed record WebPlayRequest(WebSiteDto Site, string Flag, string Id);
 public sealed record WebSignRequest(string Url);
-public sealed record WebEpisodeDto(string Name, string Url, bool IsHls);
+public sealed record WebEpisodeDto(
+    string Name,
+    string Url,
+    bool IsHls,
+    bool RequiresSpider = false,
+    bool RequiresParser = false);
 public sealed record WebLineDto(string Name, IReadOnlyList<WebEpisodeDto> Episodes);
 public sealed record WebItemDto(
     string SourceKey,
@@ -78,7 +91,7 @@ public sealed class WebProxySigner(IConfiguration configuration)
     }
 }
 
-public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
+public sealed class WebClientGateway
 {
     private const int MaximumConfigurationBytes = 10 * 1024 * 1024;
     private const int MaximumManifestBytes = 4 * 1024 * 1024;
@@ -87,6 +100,22 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
         TimeSpan.FromMilliseconds(200),
         TimeSpan.FromMilliseconds(800),
     ];
+    private static readonly JsonSerializerOptions GatewayJsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly HttpClient http;
+    private readonly WebProxySigner signer;
+    private readonly Uri? _spiderGateway;
+    private readonly string _spiderGatewayToken;
+    private bool SpiderGatewayConfigured => _spiderGateway is not null && _spiderGatewayToken.Length > 0;
+
+    public WebClientGateway(HttpClient http, WebProxySigner signer, IConfiguration? configuration = null)
+    {
+        this.http = http;
+        this.signer = signer;
+        _spiderGateway = Uri.TryCreate(
+            configuration?["SPIDER_GATEWAY_URL"]?.Trim().TrimEnd('/'), UriKind.Absolute, out var gateway) &&
+            gateway.Scheme is "http" or "https" ? gateway : null;
+        _spiderGatewayToken = configuration?["SPIDER_GATEWAY_TOKEN"]?.Trim() ?? string.Empty;
+    }
     public async Task<WebConfigResponse> InspectAsync(WebConfigRequest request, CancellationToken cancellationToken)
     {
         if (request.GroupId == Guid.Empty) throw new ArgumentException("配置源标识无效。");
@@ -104,7 +133,9 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
             counters,
             cancellationToken);
         if (counters.RuntimeRequired > 0)
-            warnings.Insert(0, $"共识别 {counters.Detected} 个站点；其中 {sites.Count} 个 HTTP 站点可在网页端直接运行，{counters.RuntimeRequired} 个 JAR/CSP 站点需要 Android TVBox Spider 运行时。");
+            warnings.Insert(0, SpiderGatewayConfigured
+                ? $"共识别 {counters.Detected} 个站点；{counters.RuntimeRequired} 个 JAR/CSP 站点已接入 Android Spider Gateway。"
+                : $"共识别 {counters.Detected} 个站点；其中 {sites.Count} 个 HTTP 站点可直接运行，{counters.RuntimeRequired} 个 JAR/CSP 站点需配置 Android Spider Gateway。");
         return new WebConfigResponse(sites.Values.ToArray(), lives.Values.ToArray(), warnings, counters.Detected, counters.RuntimeRequired);
     }
 
@@ -131,7 +162,7 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
     public async Task<IReadOnlyList<WebItemDto>> SearchAsync(WebCatalogueRequest request, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.Keyword)) throw new ArgumentException("请输入搜索关键词。");
-        var sites = NormalizeSites(request.Sites).Take(40).ToArray();
+        var sites = NormalizeSites(request.Sites).Where(site => site.Searchable).Take(40).ToArray();
         using var gate = new SemaphoreSlim(8);
         var tasks = sites.Select(async site =>
         {
@@ -153,6 +184,20 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
     public async Task<WebDetailDto> DetailAsync(WebDetailRequest request, CancellationToken cancellationToken)
     {
         var site = NormalizeSites([request.Site]).Single();
+        if (IsCsp(site))
+        {
+            var spiderDetail = TvBoxJsonResultParser.ParseDetail(
+                site.Key,
+                await InvokeSpiderAsync("detail", site, new { id = request.Id }, cancellationToken));
+            var spiderSources = spiderDetail.Sources.Select(source => new WebLineDto(
+                source.Name,
+                source.Episodes.Select(episode => new WebEpisodeDto(
+                    episode.Name,
+                    episode.Url,
+                    false,
+                    true)).ToArray())).Where(source => source.Episodes.Count > 0).ToArray();
+            return new WebDetailDto(ToItem(site, spiderDetail.Item), spiderSources, spiderDetail.Description, spiderDetail.Metadata);
+        }
         var uri = AddQuery(site.Api, new Dictionary<string, string> { ["ac"] = "detail", ["ids"] = request.Id });
         using var response = await SendAsync(uri, null, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -165,6 +210,24 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
                     ProxyUrl(episode.Url, "media", TimeSpan.FromHours(12)),
                     LooksLikeHls(episode.Url))).ToArray())).Where(source => source.Episodes.Count > 0).ToArray();
         return new WebDetailDto(ToItem(site, detail.Item), sources, detail.Description, detail.Metadata);
+    }
+
+    public async Task<WebEpisodeDto> PlayAsync(WebPlayRequest request, CancellationToken cancellationToken)
+    {
+        var site = NormalizeSites([request.Site]).Single();
+        if (!IsCsp(site))
+            return new WebEpisodeDto(string.Empty, SignMedia(request.Id), LooksLikeHls(request.Id));
+        var json = await InvokeSpiderAsync("player", site, new { flag = request.Flag, id = request.Id }, cancellationToken);
+        using var document = JsonDocument.Parse(json, new JsonDocumentOptions { AllowTrailingCommas = true });
+        var root = document.RootElement;
+        var url = root.TryGetProperty("url", out var value) ? value.GetString() : null;
+        if (string.IsNullOrWhiteSpace(url)) throw new InvalidDataException("Spider 没有返回播放地址。");
+        var requiresParser = root.TryGetProperty("parse", out var parse) &&
+                             ((parse.ValueKind == JsonValueKind.Number && parse.TryGetInt32(out var parseValue) && parseValue != 0) ||
+                              (parse.ValueKind == JsonValueKind.String && parse.GetString() is not (null or "" or "0")));
+        return requiresParser
+            ? new WebEpisodeDto(string.Empty, url, false, false, true)
+            : new WebEpisodeDto(string.Empty, SignMedia(url), LooksLikeHls(url));
     }
 
     public string SignMedia(string address) => ProxyUrl(RequireAddress(address).ToString(), "media", TimeSpan.FromHours(12));
@@ -234,14 +297,32 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
         {
             index++;
             counters.Detected++;
+            var key = $"{groupKey}:{(string.IsNullOrWhiteSpace(site.RuntimeKey) ? index : site.RuntimeKey)}";
+            if (site.Type == 3 && site.Api.StartsWith("csp_", StringComparison.OrdinalIgnoreCase))
+            {
+                counters.RuntimeRequired++;
+                if (SpiderGatewayConfigured)
+                {
+                    var jar = ResolveDecoratedAddress(address, site.Jar ?? parsed.Profile.Spider);
+                    if (!string.IsNullOrWhiteSpace(jar))
+                        sites[key] = new WebSiteDto(
+                            key,
+                            string.IsNullOrWhiteSpace(site.Name) ? $"接口 {index}" : site.Name,
+                            site.Api,
+                            3,
+                            jar,
+                            site.Ext,
+                            site.Searchable is not 0);
+                }
+                continue;
+            }
             if (site.Type is not (1 or 2 or 4) ||
                 !Uri.TryCreate(site.Api, UriKind.Absolute, out var api) || !IsHttp(api))
             {
                 counters.RuntimeRequired++;
                 continue;
             }
-            var key = $"{groupKey}:{(string.IsNullOrWhiteSpace(site.RuntimeKey) ? index : site.RuntimeKey)}";
-            sites[key] = new WebSiteDto(key, string.IsNullOrWhiteSpace(site.Name) ? $"接口 {index}" : site.Name, api.ToString());
+            sites[key] = new WebSiteDto(key, string.IsNullOrWhiteSpace(site.Name) ? $"接口 {index}" : site.Name, api.ToString(), site.Type, null, site.Ext, site.Searchable is not 0);
         }
 
         foreach (var live in parsed.Profile.Lives)
@@ -259,6 +340,11 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
     {
         try
         {
+            if (IsCsp(site))
+            {
+                var cspPage = TvBoxJsonResultParser.ParsePage(site.Key, await InvokeSpiderAsync("home", site, new { }, cancellationToken));
+                return cspPage.Items.Select(item => ToItem(site, item)).ToArray();
+            }
             var uri = AddQuery(site.Api, new Dictionary<string, string> { ["ac"] = "detail" });
             using var response = await SendAsync(uri, null, cancellationToken);
             response.EnsureSuccessStatusCode();
@@ -270,9 +356,14 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
 
     private async Task<CataloguePage> QueryPageAsync(
         WebSiteDto site,
-        IReadOnlyDictionary<string, string> parameters,
+        Dictionary<string, string> parameters,
         CancellationToken cancellationToken)
     {
+        if (IsCsp(site))
+        {
+            var keyword = parameters.TryGetValue("wd", out var value) ? value : string.Empty;
+            return TvBoxJsonResultParser.ParsePage(site.Key, await InvokeSpiderAsync("search", site, new { keyword }, cancellationToken));
+        }
         var uri = AddQuery(site.Api, parameters);
         using var response = await SendAsync(uri, null, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -379,10 +470,50 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
         .GroupBy(item => $"{item.SourceKey}|{item.Id}", StringComparer.Ordinal)
         .Select(group => group.First()).Take(limit).ToArray();
 
-    private static IEnumerable<WebSiteDto> NormalizeSites(IEnumerable<WebSiteDto> sites) => sites
+    private IEnumerable<WebSiteDto> NormalizeSites(IEnumerable<WebSiteDto> sites) => sites
         .Where(site => !string.IsNullOrWhiteSpace(site.Key) && !string.IsNullOrWhiteSpace(site.Name) &&
-                       Uri.TryCreate(site.Api, UriKind.Absolute, out var uri) && IsHttp(uri))
+                       ((IsCsp(site) && SpiderGatewayConfigured && !string.IsNullOrWhiteSpace(site.Jar)) ||
+                        (Uri.TryCreate(site.Api, UriKind.Absolute, out var uri) && IsHttp(uri))))
         .GroupBy(site => site.Key, StringComparer.Ordinal).Select(group => group.First());
+
+    private static bool IsCsp(WebSiteDto site) =>
+        site.Type == 3 && site.Api.StartsWith("csp_", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<string> InvokeSpiderAsync(string method, WebSiteDto site, object values, CancellationToken cancellationToken)
+    {
+        if (!SpiderGatewayConfigured) throw new InvalidOperationException("服务器尚未配置 Android Spider Gateway。");
+        var payload = new Dictionary<string, object?>
+        {
+            ["site"] = new
+            {
+                key = site.Key,
+                name = site.Name,
+                api = site.Api,
+                type = 3,
+                jar = site.Jar,
+                ext = site.Ext,
+                searchable = site.Searchable ? 1 : 0,
+            }
+        };
+        foreach (var property in values.GetType().GetProperties()) payload[property.Name] = property.GetValue(values);
+        using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(_spiderGateway!, $"/v1/spider/{method}"));
+        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _spiderGatewayToken);
+        message.Content = new StringContent(JsonSerializer.Serialize(payload, GatewayJsonOptions), Encoding.UTF8, "application/json");
+        using var response = await http.SendAsync(message, cancellationToken);
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException($"Android Spider Gateway 返回 HTTP {(int)response.StatusCode}：{content}", null, response.StatusCode);
+        return content;
+    }
+
+    private static string? ResolveDecoratedAddress(Uri configurationAddress, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var split = value.IndexOf(";md5;", StringComparison.OrdinalIgnoreCase);
+        var addressPart = split < 0 ? value : value[..split];
+        if (!Uri.TryCreate(configurationAddress, addressPart, out var resolved) || !IsHttp(resolved)) return null;
+        return split < 0 ? resolved.ToString() : resolved + value[split..];
+    }
 
     private static string DecodeConfiguration(string value)
     {

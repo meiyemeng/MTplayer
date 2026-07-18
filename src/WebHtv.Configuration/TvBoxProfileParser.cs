@@ -44,6 +44,7 @@ public static class TvBoxProfileParser
             }
 
             var errors = new List<string>();
+            ApplyInheritedSpider(profile);
             AssignRuntimeKeys(profile);
             ValidateDepot(profile, errors);
             return new TvBoxProfileParseResult(profile, errors);
@@ -52,6 +53,13 @@ public static class TvBoxProfileParser
         {
             return new TvBoxProfileParseResult(null, [$"配置不是有效 JSON：{exception.Message}"]);
         }
+    }
+
+    private static void ApplyInheritedSpider(TvBoxProfile profile)
+    {
+        if (string.IsNullOrWhiteSpace(profile.Spider)) return;
+        foreach (var site in profile.Sites.Where(site => site.Type == 3 && string.IsNullOrWhiteSpace(site.Jar)))
+            site.Jar = profile.Spider;
     }
 
     /// <summary>

@@ -198,18 +198,20 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
     public static ShellViewModel CreateDefault()
     {
         var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        var gatewayProvider = new SpiderGatewayProvider(new HttpClient { Timeout = TimeSpan.FromSeconds(45) });
         return new ShellViewModel(
             new AtomicFileConfigurationStore(ApplicationPaths.ConfigurationFilePath),
             new PosterWallPreferencesStore(ApplicationPaths.PosterWallPreferencesFilePath),
             new LibraryStore(ApplicationPaths.LibraryFilePath),
             new AppSettingsStore(ApplicationPaths.SettingsFilePath),
             new LivePlaylistService(),
-            [new HttpTvBoxCatalogueProvider(httpClient), new JintSpiderProvider(httpClient)]);
+            [new HttpTvBoxCatalogueProvider(httpClient), new JintSpiderProvider(httpClient), gatewayProvider]);
     }
 
     public async Task LoadAsync()
     {
         _settings = await _settingsStore.LoadAsync();
+        ConfigureSpiderGateway();
         RefreshManagedSources();
         try
         {
@@ -403,6 +405,7 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
     public async Task SearchAsync()
     {
         ShowTopLists = false;
+        PosterWall.Clear();
         if (string.IsNullOrWhiteSpace(SearchKeyword))
         {
             StatusMessage = "请输入要搜索的片名、演员或关键词。";
@@ -428,7 +431,6 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
             if (executableSites.Count > 0)
             {
                 StatusMessage = $"正在查询 {executableSites.Count} 个可执行站点…";
-                PosterWall.Clear();
                 var searchTasks = executableSites.Select(async entry =>
                 {
                     try
@@ -469,7 +471,7 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
 
             if (site is null || provider is null)
             {
-                StatusMessage = "配置中没有当前可执行的 HTTP 或 JavaScript Spider 站点；Python 与 CSP Spider 将继续接入。";
+                StatusMessage = "没有可执行站点。CSP/JAR 站点需先在设置中填写已开启的 Android Spider Gateway 地址与令牌。";
                 return;
             }
 
@@ -493,6 +495,7 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
 
     public async Task LoadTopListsAsync()
     {
+        ClearTopLists();
         try
         {
             var profile = await LoadCurrentProfileAsync();
@@ -505,7 +508,11 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
                 .OrderBy(entry => entry.Provider is HttpTvBoxCatalogueProvider ? 0 : 1)
                 .Take(4)
                 .ToArray();
-            if (sites.Length == 0) return;
+            if (sites.Length == 0)
+            {
+                StatusMessage = "没有可用于首页的站点；CSP/JAR 配置请先连接 Android Spider Gateway。";
+                return;
+            }
 
             StatusMessage = "正在准备首页 Top 10…";
             var categories = new[]
@@ -639,18 +646,34 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
 
     private static async Task<bool> HasReachablePlaybackAsync(MovieDetailContext context, CancellationToken cancellationToken)
     {
-        var requests = context.Detail.Sources
+        var sources = context.Detail.Sources
             .Where(source => source.Episodes.Count > 0)
-            .Select(source => context.Provider.CreatePlayRequest(context.Site, source, source.Episodes[0]))
-            .OrderBy(request => request.RequiresParser)
             .Take(4)
             .ToArray();
 
-        foreach (var originalRequest in requests)
+        foreach (var source in sources)
         {
+            PlayRequest originalRequest;
+            try
+            {
+                originalRequest = context.Provider is IAsyncPlayRequestProvider asyncProvider
+                    ? await asyncProvider.CreatePlayRequestAsync(context.Site, source, source.Episodes[0], cancellationToken)
+                    : context.Provider.CreatePlayRequest(context.Site, source, source.Episodes[0]);
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidDataException)
+            {
+                continue;
+            }
             var request = originalRequest.RequiresParser
                 ? await ParserResolver.ResolveAsync(context.Profile.Parses, originalRequest, cancellationToken)
                 : originalRequest;
+            if (request is null && originalRequest.RequiresParser &&
+                Uri.TryCreate(originalRequest.Url, UriKind.Absolute, out var parserAddress) &&
+                (parserAddress.Scheme == Uri.UriSchemeHttp || parserAddress.Scheme == Uri.UriSchemeHttps))
+            {
+                // WebView2 can execute a browser parser and capture its media request.
+                return true;
+            }
             if (request is null || request.RequiresParser ||
                 !Uri.TryCreate(request.Url, UriKind.Absolute, out var address) ||
                 (address.Scheme != Uri.UriSchemeHttp && address.Scheme != Uri.UriSchemeHttps)) continue;
@@ -692,6 +715,7 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
 
     public static int GetPreferredSourceIndex(MovieDetailContext context)
     {
+        if (context.Provider is IAsyncPlayRequestProvider) return 0;
         for (var index = 0; index < context.Detail.Sources.Count; index++)
         {
             var source = context.Detail.Sources[index];
@@ -708,7 +732,10 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
             if (sourceIndex < 0 || sourceIndex >= context.Detail.Sources.Count) throw new ArgumentOutOfRangeException(nameof(sourceIndex));
             var source = context.Detail.Sources[sourceIndex];
             if (episodeIndex < 0 || episodeIndex >= source.Episodes.Count) throw new ArgumentOutOfRangeException(nameof(episodeIndex));
-            var request = context.Provider.CreatePlayRequest(context.Site, source, source.Episodes[episodeIndex]);
+            var episode = source.Episodes[episodeIndex];
+            var request = context.Provider is IAsyncPlayRequestProvider asyncProvider
+                ? await asyncProvider.CreatePlayRequestAsync(context.Site, source, episode)
+                : context.Provider.CreatePlayRequest(context.Site, source, episode);
             if (request.RequiresParser)
             {
                 IReadOnlyList<TvBoxParser> parsers = selectedParser is null ? context.Profile.Parses : [selectedParser];
@@ -722,6 +749,14 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
                 if (browserParser is not null)
                 {
                     return request with { Url = ParserResolver.BuildAddress(browserParser.Url!, request.Url) };
+                }
+
+                if (Uri.TryCreate(request.Url, UriKind.Absolute, out var browserAddress) &&
+                    (browserAddress.Scheme == Uri.UriSchemeHttp || browserAddress.Scheme == Uri.UriSchemeHttps))
+                {
+                    // Some Android spiders already return their own browser parser URL.
+                    // Let WebView2 execute it and capture the real media request.
+                    return request;
                 }
 
                 StatusMessage = "该线路需要解析器；原生解析器正在接入。";
@@ -821,6 +856,7 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
     {
         settings.DisabledSiteKeys = SiteOptions.Where(item => !item.IsEnabled).Select(item => item.RuntimeKey).ToList();
         _settings = settings;
+        ConfigureSpiderGateway();
         await _settingsStore.SaveAsync(settings);
         StatusMessage = "设置已保存。";
     }
@@ -1014,6 +1050,8 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
         document = await ExpandDepotAsync(document);
         await _configurationStore.SaveAsync(document);
         var profile = TvBoxProfileParser.Parse(document.SourceText).Profile!;
+        PosterWall.Clear();
+        ClearTopLists();
         UpdateSiteOptions(profile);
         StatusMessage = $"已从 {sourceName} 导入配置。{DescribeImportedProfile(profile, null)}";
     }
@@ -1054,6 +1092,12 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
         CustomLiveSources.Clear();
         foreach (var source in _settings.CustomLiveSources) CustomLiveSources.Add(source);
         OnPropertyChanged(nameof(ActiveConfigurationSourceId));
+    }
+
+    private void ConfigureSpiderGateway()
+    {
+        var provider = _catalogueProviders.OfType<SpiderGatewayProvider>().FirstOrDefault();
+        provider?.Configure(_settings.SpiderGatewayUrl, _settings.SpiderGatewayToken);
     }
 
     public string ActiveConfigurationSourceId => _settings.ActiveConfigurationSourceId;

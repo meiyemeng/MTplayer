@@ -11,6 +11,8 @@ public sealed class ClientSettings
     public bool AutoFullscreen { get; set; }
     public bool UseSourceCovers { get; set; } = true;
     public string TmdbApiKey { get; set; } = string.Empty;
+    public string SpiderGatewayUrl { get; set; } = string.Empty;
+    public string SpiderGatewayToken { get; set; } = string.Empty;
     public List<string> DisabledSiteKeys { get; set; } = [];
     public List<ConfigurationGroupRecord> ConfigurationGroups { get; set; } = [];
     public List<CustomLiveSourceRecord> CustomLiveSources { get; set; } = [];

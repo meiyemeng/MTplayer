@@ -141,6 +141,8 @@ public partial class MainWindow : Window
         AutoFullscreenCheck.IsChecked = settings.AutoFullscreen;
         UseSourceCoversCheck.IsChecked = settings.UseSourceCovers;
         TmdbKeyText.Text = settings.TmdbApiKey;
+        SpiderGatewayUrlText.Text = settings.SpiderGatewayUrl;
+        SpiderGatewayTokenText.Text = settings.SpiderGatewayToken;
     }
 
     private async void SaveSettings_Click(object sender, RoutedEventArgs e)
@@ -152,6 +154,8 @@ public partial class MainWindow : Window
         settings.AutoFullscreen = AutoFullscreenCheck.IsChecked == true;
         settings.UseSourceCovers = UseSourceCoversCheck.IsChecked == true;
         settings.TmdbApiKey = TmdbKeyText.Text.Trim();
+        settings.SpiderGatewayUrl = SpiderGatewayUrlText.Text.Trim();
+        settings.SpiderGatewayToken = SpiderGatewayTokenText.Text.Trim();
         await _viewModel.SaveSettingsAsync(settings);
     }
 

@@ -32,3 +32,12 @@ public interface ITvBoxCatalogueProvider
 
     PlayRequest CreatePlayRequest(TvBoxSite site, EpisodeSource source, Episode episode);
 }
+
+public interface IAsyncPlayRequestProvider
+{
+    Task<PlayRequest> CreatePlayRequestAsync(
+        TvBoxSite site,
+        EpisodeSource source,
+        Episode episode,
+        CancellationToken cancellationToken = default);
+}

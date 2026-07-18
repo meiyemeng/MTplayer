@@ -120,10 +120,10 @@ public final class ConfigurationRepository {
             List<Site> cached = readCache(group.id);
             try {
                 List<Site> fresh = loadSites(group.url, group.id, 0);
-                if (!fresh.isEmpty()) {
-                    prefs.edit().putString("cache." + group.id, gson.toJson(fresh)).apply();
-                    cached = fresh;
-                }
+                // A successfully parsed configuration is authoritative even when
+                // empty. Otherwise switching sources leaves stale posters behind.
+                prefs.edit().putString("cache." + group.id, gson.toJson(fresh)).apply();
+                cached = fresh;
             } catch (IOException | RuntimeException ex) {
                 if (cached.isEmpty()) throw ex;
             }
@@ -142,10 +142,8 @@ public final class ConfigurationRepository {
             List<LiveChannel> channels = readLiveCache(group.id);
             try {
                 List<LiveChannel> fresh = loadLiveChannels(group.url, group.name, 0);
-                if (!fresh.isEmpty()) {
-                    prefs.edit().putString("livecache." + group.id, gson.toJson(fresh)).apply();
-                    channels = fresh;
-                }
+                prefs.edit().putString("livecache." + group.id, gson.toJson(fresh)).apply();
+                channels = fresh;
             } catch (IOException exception) {
                 lastFailure = exception;
             }
@@ -292,24 +290,32 @@ public final class ConfigurationRepository {
 
     private List<Site> loadSites(String url, String groupId, int depth) throws IOException {
         if (depth > 3) return Collections.emptyList();
-        String body = download(url);
-        JsonElement root = parsePossiblyWrapped(body);
+        JsonElement root = parsePossiblyWrapped(download(url));
         if (!root.isJsonObject()) return Collections.emptyList();
         JsonObject obj = root.getAsJsonObject();
         List<Site> result = new ArrayList<>();
+        String profileJar = resolveDecorated(url, first(text(obj, "spider"), text(obj, "jar")));
         JsonArray sites = array(obj, "sites");
         if (sites != null) {
             int index = 0;
             for (JsonElement element : sites) {
                 if (!element.isJsonObject()) continue;
-                JsonObject siteObject = element.getAsJsonObject();
-                String api = text(siteObject, "api");
-                if (api == null || !(api.startsWith("https://") || api.startsWith("http://"))) continue;
-                int type = number(siteObject, "type", 0);
-                if (type != 1 && type != 2 && type != 4) continue;
-                String name = first(text(siteObject, "name"), text(siteObject, "key"), "接口 " + (++index));
-                String key = first(text(siteObject, "key"), "site" + index);
-                result.add(new Site(groupId + ":" + key, name, api));
+                JsonObject value = element.getAsJsonObject();
+                String api = text(value, "api");
+                int type = number(value, "type", 0);
+                boolean direct = api != null && (api.startsWith("https://") || api.startsWith("http://")) &&
+                        (type == 0 || type == 1 || type == 2 || type == 4);
+                boolean csp = type == 3 && api != null && api.startsWith("csp_");
+                if (!direct && !csp) continue;
+                index++;
+                String name = first(text(value, "name"), text(value, "key"), "接口 " + index);
+                String key = first(text(value, "key"), "site" + index);
+                String jar = resolveDecorated(url, first(text(value, "jar"), profileJar));
+                JsonElement rawExt = value.get("ext");
+                String ext = rawExt == null || rawExt.isJsonNull() ? "" :
+                        rawExt.isJsonPrimitive() ? rawExt.getAsString() : gson.toJson(rawExt);
+                boolean searchable = number(value, "searchable", 1) != 0;
+                result.add(new Site(groupId + ":" + key, name, api, type == 0 ? 1 : type, jar, ext, searchable));
             }
         }
         JsonArray urls = array(obj, "urls");
@@ -320,15 +326,14 @@ public final class ConfigurationRepository {
                 if (element.isJsonPrimitive()) childUrl = element.getAsString();
                 else if (element.isJsonObject()) childUrl = first(text(element.getAsJsonObject(), "url"), text(element.getAsJsonObject(), "api"));
                 if (childUrl == null || childUrl.trim().isEmpty()) continue;
-                childUrl = resolve(url, childUrl.trim());
-                result.addAll(loadSites(childUrl, groupId + ":g" + (++index), depth + 1));
+                result.addAll(loadSites(resolve(url, childUrl.trim()), groupId + ":g" + (++index), depth + 1));
             }
         }
         return result;
     }
 
     private String download(String url) throws IOException {
-        Request request = new Request.Builder().url(url).header("User-Agent", "MTPlayer/1.3 Android").build();
+        Request request = new Request.Builder().url(url).header("User-Agent", "MTPlayer/1.3.1 Android").build();
         try (Response response = http.newCall(request).execute()) {
             if (!response.isSuccessful() || response.body() == null) throw new IOException("配置下载失败：HTTP " + response.code());
             if (response.body().contentLength() > MAX_CONFIG_BYTES) throw new IOException("配置文件超过 10 MiB");
@@ -385,6 +390,14 @@ public final class ConfigurationRepository {
     private static int number(JsonObject obj, String key, int fallback) { JsonElement e = obj.get(key); try { return e != null && e.isJsonPrimitive() ? e.getAsInt() : fallback; } catch (RuntimeException ex) { return fallback; } }
     private static String first(String... values) { for (String value : values) if (value != null && !value.trim().isEmpty()) return value; return null; }
     private static String resolve(String parent, String child) { try { return URI.create(parent).resolve(child).toString(); } catch (RuntimeException ex) { return child; } }
+    private static String resolveDecorated(String parent, String child) {
+        if (child == null || child.trim().isEmpty()) return child;
+        String value = child.trim();
+        int marker = value.indexOf(";md5;");
+        String suffix = marker >= 0 ? value.substring(marker) : "";
+        String address = marker >= 0 ? value.substring(0, marker) : value;
+        return resolve(parent, address) + suffix;
+    }
     private static String requireHttpUrl(String value) {
         String url = value == null ? "" : value.trim();
         URI uri;

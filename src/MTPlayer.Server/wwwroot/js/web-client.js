@@ -229,9 +229,10 @@
         const nextSites = result.sites || [];
         const nextLives = result.lives || [];
         const warnings = result.warnings || [];
-        // A temporary upstream outage must not erase the last known usable catalogue or live list.
-        if (nextSites.length || !(group.sites?.length && warnings.length)) group.sites = nextSites;
-        if (nextLives.length || !(group.lives?.length && warnings.length)) group.lives = nextLives;
+        // A successful inspection is authoritative, including an intentionally empty result.
+        // Network failures throw before this point and therefore keep the previous cache.
+        group.sites = nextSites;
+        group.lives = nextLives;
         group.warnings = warnings;
         group.detectedSiteCount = Number(result.detectedSiteCount || group.sites.length);
         group.runtimeRequiredSiteCount = Number(result.runtimeRequiredSiteCount || 0);
@@ -377,8 +378,24 @@
         const episode = line?.episodes[episodeIndex];
         if (!episode) { toast("该剧集没有有效播放地址。", true); return; }
         currentLineIndex = lineIndex; currentEpisodeIndex = episodeIndex;
+        let playable = episode;
+        if (episode.requiresSpider) {
+            const site = enabledSites().find(value => value.key === currentDetail.item.sourceKey) || allSites().find(value => value.key === currentDetail.item.sourceKey);
+            if (!site) { toast("原播放接口已停用或被删除。", true); return; }
+            busy(true, "正在通过 Android Spider 解析播放地址…");
+            try {
+                playable = await api("/api/v1/web/catalogue/player", { method: "POST", body: JSON.stringify({ site, flag: line.name, id: episode.url }) });
+            } catch (error) { toast(error.message, true); return; }
+            finally { busy(false); }
+        }
+        if (playable.requiresParser) {
+            const parserWindow = window.open(playable.url, "_blank", "noopener,noreferrer");
+            if (!parserWindow) toast("浏览器已拦截解析页，请允许本站弹出窗口后重试。", true);
+            else toast("已在新窗口打开网页解析播放。");
+            return;
+        }
         closeDetail();
-        await startVideo(episode.url, episode.isHls, currentDetail.item.title, `${line.name} · ${episode.name}`);
+        await startVideo(playable.url, playable.isHls, currentDetail.item.title, `${line.name} · ${episode.name}`);
     }
 
     async function startVideo(url, isHls, title, subtitle) {

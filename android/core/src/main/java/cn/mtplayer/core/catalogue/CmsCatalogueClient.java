@@ -1,5 +1,7 @@
 package cn.mtplayer.core.catalogue;
 
+import android.content.Context;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -24,22 +26,38 @@ import cn.mtplayer.core.model.MediaDetail;
 import cn.mtplayer.core.model.MediaItem;
 import cn.mtplayer.core.model.PlayLine;
 import cn.mtplayer.core.model.Site;
+import cn.mtplayer.core.spider.CspSpiderRuntime;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
 public final class CmsCatalogueClient {
+    public static final class ResolvedPlayback {
+        public final String url;
+        public final boolean requiresParser;
+        public ResolvedPlayback(String url, boolean requiresParser) {
+            this.url = url;
+            this.requiresParser = requiresParser;
+        }
+    }
     private final OkHttpClient http;
     private final Gson gson = new Gson();
+    private final CspSpiderRuntime csp;
 
-    public CmsCatalogueClient(OkHttpClient http) { this.http = http; }
+    public CmsCatalogueClient(Context context, OkHttpClient http) {
+        this.http = http;
+        this.csp = new CspSpiderRuntime(context, http);
+    }
+
+    /** Retained for JVM unit tests which exercise direct HTTP CMS providers only. */
+    public CmsCatalogueClient(OkHttpClient http) { this.http = http; this.csp = null; }
 
     public List<MediaItem> searchAll(List<Site> sites, String keyword) {
         if (sites.isEmpty() || keyword == null || keyword.trim().isEmpty()) return Collections.emptyList();
         ExecutorService pool = Executors.newFixedThreadPool(Math.min(8, sites.size()));
         List<Future<List<MediaItem>>> futures = new ArrayList<>();
-        for (Site site : sites) futures.add(pool.submit(() -> query(site, keyword.trim(), false)));
+        for (Site site : sites) if (site.searchable) futures.add(pool.submit(() -> query(site, keyword.trim(), false)));
         Map<String, MediaItem> merged = new LinkedHashMap<>();
         for (Future<List<MediaItem>> future : futures) {
             try {
@@ -68,7 +86,7 @@ public final class CmsCatalogueClient {
     }
 
     public MediaDetail detail(Site site, String id) throws IOException {
-        JsonObject root = request(site.api, "detail", null, id, null);
+        JsonObject root = site.isCsp() ? requireCsp().detail(site, id) : request(site.api, "detail", null, id, null);
         JsonArray list = array(root, "list");
         if (list == null || list.size() == 0) throw new IOException("该接口没有返回影片详情");
         JsonObject vod = list.get(0).getAsJsonObject();
@@ -92,8 +110,29 @@ public final class CmsCatalogueClient {
         return detail;
     }
 
+    public String resolvePlayback(Site site, String flag, String id) throws IOException {
+        return resolvePlaybackResult(site, flag, id).url;
+    }
+
+    public ResolvedPlayback resolvePlaybackResult(Site site, String flag, String id) throws IOException {
+        if (!site.isCsp()) return new ResolvedPlayback(id, false);
+        JsonObject result = requireCsp().player(site, flag, id);
+        String address = first(text(result, "url"), text(result, "playUrl"));
+        if (address == null || address.trim().isEmpty()) throw new IOException("Spider 没有返回播放地址");
+        JsonElement parse = result.get("parse");
+        boolean requiresParser = parse != null && !parse.isJsonNull() &&
+                ((parse.isJsonPrimitive() && parse.getAsJsonPrimitive().isNumber() && parse.getAsInt() != 0) ||
+                 (parse.isJsonPrimitive() && parse.getAsJsonPrimitive().isString() &&
+                         !parse.getAsString().trim().isEmpty() && !"0".equals(parse.getAsString().trim())));
+        return new ResolvedPlayback(address.trim(), requiresParser);
+    }
+
     private List<MediaItem> query(Site site, String keyword, boolean latest) throws IOException {
         List<MediaItem> result = new ArrayList<>();
+        if (site.isCsp()) {
+            addItems(result, site, keyword == null ? requireCsp().home(site) : requireCsp().search(site, keyword));
+            return result;
+        }
         try {
             addItems(result, site, request(site.api, "detail", keyword, null, null));
         } catch (IOException directSearchFailure) {
@@ -108,6 +147,11 @@ public final class CmsCatalogueClient {
             }
         }
         return result;
+    }
+
+    private CspSpiderRuntime requireCsp() throws IOException {
+        if (csp == null) throw new IOException("当前运行环境不支持 Android CSP Spider");
+        return csp;
     }
 
     private static void addItems(List<MediaItem> target, Site site, JsonObject root) {

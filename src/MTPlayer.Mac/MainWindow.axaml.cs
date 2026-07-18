@@ -182,7 +182,7 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void ShowAbout()
     {
-        var root = ContentPage("关于软件", "MT播放器 macOS 1.3.0");
+        var root = ContentPage("关于软件", "MT播放器 macOS 1.3.1");
         root.Children.Add(Note("原生 macOS 桌面客户端 · Intel 64 位（Apple Silicon 可通过 Rosetta 2 运行）\n\n源码仓库：https://github.com/meiyemeng/MTplayer\n客户端下载：https://github.com/meiyemeng/MTplayer/releases/latest\n\n软件不预置、不存储、不上传、不分发任何影视内容，仅播放用户自行配置且有权访问的媒体。"));
         root.Children.Add(new TextBlock { Text = "支持项目", Foreground = Brushes.White, FontSize = 22, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 20, 0, 8) });
         using var donationStream = AssetLoader.Open(new Uri("avares://MTPlayer/Assets/alipay-donate.png"));

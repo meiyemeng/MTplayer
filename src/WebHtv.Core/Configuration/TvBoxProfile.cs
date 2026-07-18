@@ -86,7 +86,7 @@ public sealed class TvBoxSite
     public JsonElement? Ext { get; init; }
 
     [JsonPropertyName("jar")]
-    public string? Jar { get; init; }
+    public string? Jar { get; set; }
 
     [JsonPropertyName("type")]
     public int Type { get; init; }

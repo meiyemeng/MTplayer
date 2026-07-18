@@ -137,7 +137,12 @@ public partial class PlayerWindow : Window, IDisposable
             }
             else request = _liveRequest;
             if (request is null) { StatusText.Text = _viewModel?.StatusMessage ?? "播放地址无效。"; StatusOverlay.Visibility = Visibility.Visible; return; }
-            if (request.RequiresParser) { StatusText.Text = "该线路是网页解析线路，请切换到 m3u8/直连线路。"; StatusOverlay.Visibility = Visibility.Visible; return; }
+            if (request.RequiresParser)
+            {
+                new WebParserWindow(request).Show();
+                Close();
+                return;
+            }
             _playback.Player.Stop();
             await _playback.OpenAsync(request);
         }

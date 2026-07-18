@@ -11,6 +11,7 @@
         android:label="${tvAppLabel}"
         android:theme="@style/Theme.MTPlayer.TV"
         android:usesCleartextTraffic="true">
+        <activity android:name="cn.mtplayer.core.player.WebParserActivity" android:configChanges="orientation|screenSize" android:screenOrientation="landscape" />
         <activity android:name=".TvPlayerActivity" android:configChanges="orientation|screenSize" android:screenOrientation="landscape" />
         <activity android:name=".TvDetailActivity" android:screenOrientation="landscape" />
         <activity android:name=".TvMainActivity" android:exported="true" android:screenOrientation="landscape">
