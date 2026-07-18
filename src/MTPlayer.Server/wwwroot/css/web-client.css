@@ -142,13 +142,20 @@ body[data-density="relaxed"] { --poster-width: 220px; }
 .check-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; max-height: 380px; overflow: auto; }
 .check-grid label { display: flex; gap: 10px; align-items: center; min-width: 0; border-radius: 10px; padding: 11px; background: var(--surface-2); }
 .check-grid span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.about-card { max-width: 900px; margin: 40px auto; border: 1px solid var(--line); border-radius: 26px; padding: 52px; background: radial-gradient(circle at top right, rgba(243,31,54,.16), transparent 36%), var(--surface); box-shadow: var(--shadow); text-align: center; }
-.about-card img { width: 100px; height: 100px; margin-bottom: 20px; border-radius: 28px; object-fit: cover; }
-.about-card h2 { font-size: 36px; }
+.about-card { max-width: 980px; margin: 40px auto; border: 1px solid var(--line); border-radius: 26px; padding: 48px; background: radial-gradient(circle at top right, rgba(243,31,54,.16), transparent 36%), var(--surface); box-shadow: var(--shadow); }
+.about-identity { display: flex; align-items: center; gap: 24px; text-align: left; }
+.about-identity img { width: 100px; height: 100px; flex: 0 0 auto; border: 1px solid rgba(243,31,54,.3); border-radius: 28px; object-fit: cover; box-shadow: 0 18px 50px rgba(0,0,0,.28); }
+.about-card h2 { margin: 8px 0; font-size: 36px; }
 .about-card p { color: #b4bdc7; line-height: 1.85; }
-.about-card div { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; margin: 28px 0; }
-.about-card div b { border: 1px solid var(--line); border-radius: 999px; padding: 9px 14px; background: var(--surface-2); }
+.about-description { margin: 30px 0; }
+.about-links { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 10px; }
+.about-links a { border: 1px solid var(--line); border-radius: 13px; padding: 13px 10px; color: #eef2f7; background: var(--surface-2); text-align: center; text-decoration: none; transition: border-color .18s ease, transform .18s ease, background .18s ease; }
+.about-links a:hover { transform: translateY(-2px); border-color: rgba(243,31,54,.5); background: var(--red-soft); }
+.donate-panel { display: grid; grid-template-columns: 1fr 230px; gap: 30px; align-items: center; margin: 34px 0 26px; border: 1px solid var(--line); border-radius: 20px; padding: 26px; background: rgba(5,8,12,.45); }
+.donate-panel h3 { margin: 8px 0; font-size: 24px; }
+.donate-panel img { width: 230px; max-height: 300px; border-radius: 16px; object-fit: cover; object-position: center 54%; }
 .about-card small { color: var(--muted); }
+.source-warning { color: #ff9299 !important; white-space: normal !important; }
 
 .detail-dialog { width: min(1180px, calc(100vw - 44px)); max-height: calc(100vh - 44px); overflow: auto; border: 1px solid #343d48; border-radius: 24px; padding: 0; background: #0d1116; color: var(--text); box-shadow: var(--shadow); }
 .detail-dialog::backdrop { background: rgba(0,0,0,.78); backdrop-filter: blur(9px); }
@@ -240,6 +247,10 @@ body[data-density="relaxed"] { --poster-width: 220px; }
     .episode-grid { grid-template-columns: repeat(3,1fr); }
     .sync-panel dl { grid-template-columns: 1fr; }
     .about-card { padding: 34px 22px; }
+    .about-identity { align-items: flex-start; }
+    .about-links { grid-template-columns: 1fr 1fr; }
+    .donate-panel { grid-template-columns: 1fr; }
+    .donate-panel img { width: min(100%, 300px); margin: auto; }
     .player-actions { max-height: 110px; overflow: auto; }
     .timeline { grid-template-columns: 48px 1fr 48px; gap: 6px; }
 }

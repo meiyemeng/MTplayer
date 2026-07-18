@@ -18,7 +18,36 @@ public sealed class UserEntity
 
     public string Role { get; set; } = "user";
 
+    public string MembershipLevel { get; set; } = "free";
+
+    public DateTimeOffset? MembershipExpiresAtUtc { get; set; }
+
+    public string? LastLoginIp { get; set; }
+
+    public string? LastLoginCity { get; set; }
+
+    public DateTimeOffset? LastLoginAtUtc { get; set; }
+
     public DateTimeOffset CreatedAtUtc { get; set; }
+}
+
+public sealed class MemberPushEntity
+{
+    public Guid Id { get; set; }
+
+    public required string Title { get; set; }
+
+    public string MinimumMembershipLevel { get; set; } = "member";
+
+    public string ConfigurationSourcesJson { get; set; } = "[]";
+
+    public string LiveSourcesJson { get; set; } = "[]";
+
+    public bool Enabled { get; set; }
+
+    public DateTimeOffset CreatedAtUtc { get; set; }
+
+    public DateTimeOffset UpdatedAtUtc { get; set; }
 }
 
 public sealed class DeviceSessionEntity

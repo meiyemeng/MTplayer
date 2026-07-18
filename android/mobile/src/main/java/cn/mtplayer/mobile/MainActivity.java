@@ -30,6 +30,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import cn.mtplayer.core.config.SourceGroup;
 import cn.mtplayer.core.model.MediaItem;
+import cn.mtplayer.core.model.LiveChannel;
 import cn.mtplayer.core.model.Site;
 import cn.mtplayer.mobile.data.AppServices;
 import cn.mtplayer.mobile.data.AndroidSyncService;
@@ -51,8 +52,8 @@ public final class MainActivity extends AppCompatActivity {
         LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(Ui.BG);
         content=new FrameLayout(this);root.addView(content,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,0,1));
         HorizontalScrollView scroll=new HorizontalScrollView(this);scroll.setHorizontalScrollBarEnabled(false);scroll.setBackgroundColor(Ui.SURFACE);
-        LinearLayout nav=new LinearLayout(this);nav.setGravity(Gravity.CENTER);String[] names={"首页","搜索","收藏","直播","登录/同步","设置"};
-        Runnable[] actions={this::showHome,this::showSearch,()->showLibrary(true),this::showLive,this::showAccount,this::showSettings};
+        LinearLayout nav=new LinearLayout(this);nav.setGravity(Gravity.CENTER);String[] names={"首页","搜索","收藏","直播","登录/同步","设置","关于"};
+        Runnable[] actions={this::showHome,this::showSearch,()->showLibrary(true),this::showLive,this::showAccount,this::showSettings,this::showAbout};
         for(int i=0;i<names.length;i++){Button b=Ui.button(this,names[i],false);int index=i;b.setOnClickListener(v->actions[index].run());nav.addView(b,new LinearLayout.LayoutParams(Ui.dp(this,i==4?112:82),Ui.dp(this,58)));}
         scroll.addView(nav);root.addView(scroll,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,58)));return root;
     }
@@ -83,8 +84,11 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void showLive(){
-        LinearLayout root=page("直播频道","打开 M3U8 / 直播流");root.addView(Ui.text(this,"支持 HTTP 和 HTTPS；请输入你拥有权限的直播流地址。"),Ui.matchWrap());EditText url=Ui.input(this,"http:// 或 https://.../live.m3u8");root.addView(url,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,56)));Button play=Ui.button(this,"开始播放",true);root.addView(play,Ui.matchWrap());play.setOnClickListener(v->{String value=url.getText().toString().trim();if(!isHttpAddress(value)){toast("请输入有效的 HTTP 或 HTTPS 直播地址");return;}Intent i=new Intent(this,PlayerActivity.class);i.putExtra("url",value);i.putExtra("title","直播频道");startActivity(i);});setPage(root);
+        ScrollView scroll=new ScrollView(this);LinearLayout root=page("LIVE & M3U8","直播频道");root.addView(Ui.text(this,"已启用配置中的直播源会自动识别；也可手动输入 HTTP/HTTPS 直播流。"),Ui.matchWrap());EditText url=Ui.input(this,"http:// 或 https://.../live.m3u8");root.addView(url,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,56)));Button play=Ui.button(this,"添加并播放",true);root.addView(play,Ui.matchWrap());play.setOnClickListener(v->playLive(url.getText().toString().trim(),"直播频道"));TextView status=Ui.text(this,"正在读取配置中的直播频道…");root.addView(status,Ui.matchWrap());LinearLayout channels=Ui.column(this);root.addView(channels,Ui.matchWrap());scroll.addView(root);setPage(scroll);
+        executor.execute(()->{try{List<LiveChannel> values=AppServices.configurations.enabledLiveChannels();runOnUiThread(()->{status.setText(values.isEmpty()?"配置中没有读取到可用直播频道。":"共识别 "+values.size()+" 个直播频道，点击即可播放。");for(LiveChannel channel:values){Button button=Ui.button(this,(safe(channel.group).isEmpty()?"":channel.group+" · ")+channel.name,false);button.setOnClickListener(v->playLive(channel.url,channel.name));channels.addView(button,Ui.matchWrap());}});}catch(Exception ex){runOnUiThread(()->status.setText("直播源读取失败："+message(ex)));}});
     }
+
+    private void playLive(String value,String title){if(!isHttpAddress(value)){toast("请输入有效的 HTTP 或 HTTPS 直播地址");return;}Intent i=new Intent(this,PlayerActivity.class);i.putExtra("url",value);i.putExtra("title",title);startActivity(i);}
 
     private void showAccount(){
         ScrollView scroll=new ScrollView(this);LinearLayout root=page("注册 · 登录 · 同步","账户与服务器");
@@ -107,7 +111,18 @@ public final class MainActivity extends AppCompatActivity {
     private void runSyncInBackground(TextView status){try{AndroidSyncService.Result result=sync.synchronize();runOnUiThread(()->status.setText("同步完成：上传 "+result.pushed+" 项，接收 "+result.pulled+" 项。"));}catch(Exception ex){runOnUiThread(()->status.setText("同步失败："+message(ex)));}}
 
     private void showSettings(){
-        ScrollView scroll=new ScrollView(this);LinearLayout root=page("数据来源","配置源管理");root.addView(Ui.text(this,"支持 HTTP/HTTPS，可添加多个 TVBox 单仓或接口组；启用的配置会共同参与搜索。"),Ui.matchWrap());Button add=Ui.button(this,"＋ 添加配置源",true);root.addView(add,Ui.matchWrap());for(SourceGroup group:AppServices.configurations.groups()){LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);Button toggle=Ui.button(this,(group.enabled?"✓ ":"○ ")+group.name,false);Button remove=Ui.button(this,"删除",false);toggle.setOnClickListener(v->{AppServices.configurations.setEnabled(group.id,!group.enabled);showSettings();});remove.setOnClickListener(v->{AppServices.configurations.remove(group.id);showSettings();});row.addView(toggle,new LinearLayout.LayoutParams(0,Ui.dp(this,56),1));row.addView(remove,new LinearLayout.LayoutParams(Ui.dp(this,82),Ui.dp(this,56)));root.addView(row,Ui.matchWrap());root.addView(Ui.text(this,group.url),Ui.matchWrap());}TextView about=Ui.text(this,"MT播放器 1.1.1\n软件不预置任何内容源，仅播放用户自行配置且有权访问的内容。用户应遵守所在地法律及内容授权规则。");about.setPadding(0,Ui.dp(this,28),0,Ui.dp(this,20));root.addView(about,Ui.matchWrap());add.setOnClickListener(v->sourceDialog());scroll.addView(root);setPage(scroll);
+        ScrollView scroll=new ScrollView(this);LinearLayout root=page("数据来源","配置源管理");root.addView(Ui.text(this,"支持 HTTP/HTTPS，可添加多个 TVBox 单仓或接口组；启用的配置会共同参与搜索。"),Ui.matchWrap());Button add=Ui.button(this,"＋ 添加配置源",true);root.addView(add,Ui.matchWrap());for(SourceGroup group:AppServices.configurations.groups()){LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);Button toggle=Ui.button(this,(group.enabled?"✓ ":"○ ")+group.name,false);Button remove=Ui.button(this,"删除",false);toggle.setOnClickListener(v->{AppServices.configurations.setEnabled(group.id,!group.enabled);showSettings();});remove.setOnClickListener(v->{AppServices.configurations.remove(group.id);showSettings();});row.addView(toggle,new LinearLayout.LayoutParams(0,Ui.dp(this,56),1));row.addView(remove,new LinearLayout.LayoutParams(Ui.dp(this,82),Ui.dp(this,56)));root.addView(row,Ui.matchWrap());root.addView(Ui.text(this,group.url),Ui.matchWrap());}TextView about=Ui.text(this,"MT播放器 1.3.0\n软件不预置任何内容源，仅播放用户自行配置且有权访问的内容。用户应遵守所在地法律及内容授权规则。\n\n源码与下载：https://github.com/meiyemeng/MTplayer/releases/latest");about.setPadding(0,Ui.dp(this,28),0,Ui.dp(this,20));root.addView(about,Ui.matchWrap());add.setOnClickListener(v->sourceDialog());scroll.addView(root);setPage(scroll);
+    }
+
+    private void showAbout(){
+        ScrollView scroll=new ScrollView(this);LinearLayout root=page("ABOUT MT PLAYER","关于软件");
+        ImageView logo=new ImageView(this);logo.setScaleType(ImageView.ScaleType.CENTER_INSIDE);Glide.with(this).load(R.drawable.logo_header).into(logo);root.addView(logo,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,100)));
+        root.addView(Ui.title(this,"MT播放器 Android · 1.3.0",22),Ui.matchWrap());
+        root.addView(Ui.text(this,"源码仓库：https://github.com/meiyemeng/MTplayer\n客户端下载：https://github.com/meiyemeng/MTplayer/releases/latest\n\n软件不预置、不存储、不上传、不分发任何影视内容，仅播放用户自行配置且有权访问的媒体。"),Ui.matchWrap());
+        root.addView(Ui.title(this,"支持项目",20),Ui.matchWrap());
+        ImageView donate=new ImageView(this);donate.setScaleType(ImageView.ScaleType.CENTER_INSIDE);Glide.with(this).load(R.drawable.alipay_donate).into(donate);root.addView(donate,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,430)));
+        root.addView(Ui.text(this,"支付宝扫码为自愿捐助，不解锁内容或会员权益，也不代表购买影视服务。"),Ui.matchWrap());
+        scroll.addView(root);setPage(scroll);
     }
 
     private void sourceDialog(){LinearLayout form=Ui.column(this);EditText name=Ui.input(this,"配置源名称");EditText url=Ui.input(this,"http:// 或 https:// 配置接口");form.addView(name,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,56)));form.addView(url,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,56)));AlertDialog dialog=new AlertDialog.Builder(this).setTitle("添加配置源").setView(form).setNegativeButton("取消",null).setPositiveButton("导入",null).create();dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(x->{try{AppServices.configurations.add(name.getText().toString(),url.getText().toString());dialog.dismiss();showSettings();}catch(Exception ex){toast(message(ex));}}));dialog.show();}

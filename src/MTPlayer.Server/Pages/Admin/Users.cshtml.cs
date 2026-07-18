@@ -32,6 +32,18 @@ public sealed class UsersModel(DeviceService devices) : PageModel
         return RedirectToPage();
     }
 
+    public async Task<IActionResult> OnPostMembershipAsync(
+        Guid userId,
+        string membershipLevel,
+        DateTimeOffset? membershipExpiresAtUtc,
+        CancellationToken cancellationToken)
+    {
+        StatusMessage = await devices.SetMembershipAsync(userId, membershipLevel, membershipExpiresAtUtc, cancellationToken)
+            ? "会员状态已更新。"
+            : "会员等级无效或未找到用户。";
+        return RedirectToPage();
+    }
+
     private async Task<IActionResult> SetDisabledAsync(
         Guid userId,
         bool disabled,

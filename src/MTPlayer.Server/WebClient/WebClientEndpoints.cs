@@ -14,6 +14,8 @@ public static class WebClientEndpoints
         var web = routes.MapGroup("/api/v1/web").AllowAnonymous().RequireRateLimiting("web-catalogue");
         web.MapPost("/config/inspect", async (WebConfigRequest request, WebClientGateway gateway, CancellationToken ct) =>
             await ExecuteAsync(() => gateway.InspectAsync(request, ct)));
+        web.MapPost("/live/inspect", async (WebLiveInspectRequest request, WebClientGateway gateway, CancellationToken ct) =>
+            await ExecuteAsync(() => gateway.InspectLiveAsync(request, ct)));
         web.MapPost("/catalogue/latest", async (WebCatalogueRequest request, WebClientGateway gateway, CancellationToken ct) =>
             await ExecuteAsync(() => gateway.LatestAsync(request, ct)));
         web.MapPost("/catalogue/search", async (WebCatalogueRequest request, WebClientGateway gateway, CancellationToken ct) =>

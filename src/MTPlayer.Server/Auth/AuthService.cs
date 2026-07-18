@@ -35,7 +35,8 @@ public sealed class AuthService(
     JwtOptions jwtOptions,
     TimeProvider timeProvider,
     ISecretProtector secretProtector,
-    AuthTiming timing)
+    AuthTiming timing,
+    ClientLocationService clientLocation)
 {
     internal const string VerificationPurpose = "verify";
     internal const string ResetPurpose = "reset";
@@ -140,7 +141,13 @@ public sealed class AuthService(
         return AuthStatus.Success;
     }
 
-    public async Task<AuthResult> LoginAsync(LoginRequest request, CancellationToken cancellationToken)
+    public Task<AuthResult> LoginAsync(LoginRequest request, CancellationToken cancellationToken) =>
+        LoginAsync(request, null, cancellationToken);
+
+    public async Task<AuthResult> LoginAsync(
+        LoginRequest request,
+        HttpContext? context,
+        CancellationToken cancellationToken)
     {
         var startedAt = timing.GetTimestamp();
         try
@@ -171,6 +178,9 @@ public sealed class AuthService(
                 return new AuthResult(AuthStatus.InvalidCredentials);
             }
 
+            var loginLocation = context is null
+                ? null
+                : await clientLocation.ResolveAsync(context, cancellationToken);
             UserEntity? unverifiedUser = null;
             await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
             {
@@ -196,6 +206,12 @@ public sealed class AuthService(
                 else
                 {
                     var now = timeProvider.GetUtcNow();
+                    if (loginLocation is not null)
+                    {
+                        user.LastLoginIp = loginLocation.IpAddress;
+                        user.LastLoginCity = loginLocation.City;
+                        user.LastLoginAtUtc = now;
+                    }
                     var refreshToken = tokenFactory.CreateRefreshToken();
                     var session = new DeviceSessionEntity
                     {
@@ -438,6 +454,7 @@ public sealed class AuthService(
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("D", CultureInfo.InvariantCulture)),
             new("sid", sessionId.ToString("D", CultureInfo.InvariantCulture)),
             new("role", user.Role),
+            new("membership", user.MembershipLevel),
             new("email_verified", "true"),
             new("scope", "sync"),
         };

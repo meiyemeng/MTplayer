@@ -3,7 +3,7 @@
 @{
     Layout = "/Pages/Shared/_AdminLayout.cshtml";
     ViewData["Title"] = "用户管理";
-    ViewData["Description"] = "查看账号状态、验证情况与活跃设备";
+    ViewData["Description"] = "查看登录位置、会员状态、设备及用户配置的影视与直播接口";
     var enabledUsers = Model.Users.Count(user => !user.Disabled);
     var activeDevices = Model.Users.Sum(user => user.ActiveDeviceCount);
 }
@@ -40,9 +40,12 @@
                     <tr>
                         <th>用户</th>
                         <th>角色</th>
-                        <th>邮箱</th>
+                        <th>邮箱验证</th>
                         <th>账号状态</th>
                         <th>设备</th>
+                        <th>登录位置</th>
+                        <th>会员</th>
+                        <th>用户来源</th>
                         <th>操作</th>
                     </tr>
                 </thead>
@@ -68,6 +71,34 @@
                             </span>
                         </td>
                         <td>@user.ActiveDeviceCount 台</td>
+                        <td>
+                            <strong>@(user.LastLoginCity ?? "未知城市")</strong><br />
+                            <small>@(user.LastLoginIp ?? "未记录 IP")</small><br />
+                            <small>@(user.LastLoginAtUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "尚未登录")</small>
+                        </td>
+                        <td>
+                            <form class="membership-form" method="post" asp-page-handler="Membership">
+                                <input type="hidden" name="userId" value="@user.Id" />
+                                <select name="membershipLevel" aria-label="会员等级">
+                                    <option value="free" selected="@(user.MembershipLevel == "free" ? "selected" : null)">普通用户</option>
+                                    <option value="member" selected="@(user.MembershipLevel == "member" ? "selected" : null)">会员</option>
+                                    <option value="vip" selected="@(user.MembershipLevel == "vip" ? "selected" : null)">VIP</option>
+                                </select>
+                                <input type="datetime-local" name="membershipExpiresAtUtc" value="@(user.MembershipExpiresAtUtc?.ToString("yyyy-MM-ddTHH:mm"))" aria-label="会员到期时间" />
+                                <button class="button small ghost" type="submit">保存</button>
+                            </form>
+                        </td>
+                        <td>
+                            <details class="source-details">
+                                <summary>@user.ConfigurationSourceAddresses.Count 配置 / @user.VideoInterfaceAddresses.Count 影视 / @user.LiveSourceAddresses.Count 直播</summary>
+                                <strong>配置源</strong>
+                                @foreach (var address in user.ConfigurationSourceAddresses) { <code>@address</code> }
+                                <strong>影视接口</strong>
+                                @foreach (var address in user.VideoInterfaceAddresses) { <code>@address</code> }
+                                <strong>直播接口</strong>
+                                @foreach (var address in user.LiveSourceAddresses) { <code>@address</code> }
+                            </details>
+                        </td>
                         <td>
                             <form class="row-actions" method="post">
                                 <input type="hidden" name="userId" value="@user.Id" />

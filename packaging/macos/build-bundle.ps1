@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.1.0",
+    [string]$Version = "1.3.0",
     [string]$Runtime = "osx-x64"
 )
 
@@ -22,7 +22,7 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Info.plist") -Destination (Join
 Copy-Item -LiteralPath (Join-Path $root "src\MTPlayer.Mac\Assets\mtplayer.icns") -Destination (Join-Path $resources "mtplayer.icns") -Force
 
 $plist = Get-Content -LiteralPath (Join-Path $app "Contents\Info.plist") -Raw
-$plist = $plist.Replace("<string>1.1.0</string>", "<string>$Version</string>")
+$plist = $plist.Replace("<string>1.3.0</string>", "<string>$Version</string>")
 Set-Content -LiteralPath (Join-Path $app "Contents\Info.plist") -Value $plist -Encoding utf8
 
 Write-Output $app

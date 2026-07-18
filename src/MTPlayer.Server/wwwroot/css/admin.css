@@ -271,6 +271,12 @@ input:focus, textarea:focus, select:focus { border-color: rgba(242, 35, 53, .75)
 .data-table td { padding: 17px 18px; border-top: 1px solid var(--border); color: #c6cdd7; vertical-align: middle; }
 .data-table tbody tr { transition: background .15s ease; }
 .data-table tbody tr:hover { background: rgba(255,255,255,.018); }
+.membership-form { display: grid; gap: 6px; min-width: 150px; }
+.membership-form select, .membership-form input { min-width: 145px; padding: 8px 9px; }
+.source-details { width: min(320px, 30vw); }
+.source-details summary { cursor: pointer; color: #e6ebf2; white-space: nowrap; }
+.source-details strong { display: block; margin: 11px 0 4px; color: #8d98a7; font-size: 10px; text-transform: uppercase; }
+.source-details code { display: block; overflow: hidden; margin: 4px 0; color: #b9c3cf; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .user-cell { display: flex; align-items: center; gap: 11px; }
 .user-avatar { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border: 1px solid rgba(242,35,53,.18); border-radius: 10px; color: #ff7a84; background: rgba(242,35,53,.07); font: 700 12px/1 var(--font-display); text-transform: uppercase; }
 .user-email { font-size: 12px; font-weight: 600; }

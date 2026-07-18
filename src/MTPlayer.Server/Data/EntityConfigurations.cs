@@ -13,8 +13,27 @@ internal sealed class UserEntityConfiguration : IEntityTypeConfiguration<UserEnt
         builder.Property(user => user.NormalizedEmail).HasMaxLength(320);
         builder.Property(user => user.PasswordHash).HasMaxLength(512);
         builder.Property(user => user.Role).HasMaxLength(32).HasDefaultValue("user");
+        builder.Property(user => user.MembershipLevel).HasMaxLength(32).HasDefaultValue("free");
+        builder.Property(user => user.LastLoginIp).HasMaxLength(64);
+        builder.Property(user => user.LastLoginCity).HasMaxLength(200);
         builder.Property(user => user.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
         builder.HasIndex(user => user.NormalizedEmail).IsUnique();
+    }
+}
+
+internal sealed class MemberPushEntityConfiguration : IEntityTypeConfiguration<MemberPushEntity>
+{
+    public void Configure(EntityTypeBuilder<MemberPushEntity> builder)
+    {
+        builder.ToTable("member_pushes");
+        builder.HasKey(push => push.Id);
+        builder.Property(push => push.Title).HasMaxLength(200);
+        builder.Property(push => push.MinimumMembershipLevel).HasMaxLength(32).HasDefaultValue("member");
+        builder.Property(push => push.ConfigurationSourcesJson).HasColumnType("jsonb");
+        builder.Property(push => push.LiveSourcesJson).HasColumnType("jsonb");
+        builder.Property(push => push.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
+        builder.Property(push => push.UpdatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
+        builder.HasIndex(push => new { push.Enabled, push.MinimumMembershipLevel });
     }
 }
 

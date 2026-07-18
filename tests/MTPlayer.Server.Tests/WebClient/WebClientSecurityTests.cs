@@ -177,6 +177,61 @@ public sealed class WebClientSecurityTests
     }
 
     [Fact]
+    public async Task Configuration_inspection_expands_nested_proxy_live_playlist()
+    {
+        const string config = """
+            {
+              "lives": [{
+                "name": "直播",
+                "group": "redirect",
+                "channels": [{
+                  "name": "电视直播",
+                  "epg": "https://epg.example/?ch={name}",
+                  "urls": ["proxy://do=live&type=txt&ext=http://93.184.216.34/nested.txt"]
+                }]
+              }]
+            }
+            """;
+        const string playlist = """
+            央视频道,#genre#
+            CCTV-4,http://media.example/cctv4.m3u8
+            CCTV-5,http://media.example/cctv5.m3u8
+            CCTV-6,http://media.example/cctv6.m3u8
+            """;
+        var handler = new RoutingHandler(new Dictionary<string, (string Content, string ContentType)>
+        {
+            ["/config.json"] = (config, "application/json"),
+            ["/nested.txt"] = (playlist, "text/plain"),
+        });
+        var gateway = new WebClientGateway(new HttpClient(handler), CreateSigner());
+
+        var result = await gateway.InspectAsync(
+            new WebConfigRequest(Guid.NewGuid(), "http://93.184.216.34/config.json"),
+            CancellationToken.None);
+
+        Assert.Equal(3, result.Lives.Count);
+        Assert.Empty(result.Warnings);
+        Assert.Contains(result.Lives, channel => channel.Name == "CCTV-4");
+        Assert.Contains(result.Lives, channel => channel.Name == "CCTV-5");
+        Assert.Contains(result.Lives, channel => channel.Name == "CCTV-6");
+    }
+
+    [Fact]
+    public async Task Live_inspection_reports_unavailable_playlist_instead_of_silently_returning_zero()
+    {
+        var handler = new RoutingHandler(new Dictionary<string, (string Content, string ContentType)>());
+        var gateway = new WebClientGateway(new HttpClient(handler), CreateSigner());
+
+        var result = await gateway.InspectLiveAsync(
+            new WebLiveInspectRequest("失效直播", "http://93.184.216.34/missing.txt"),
+            CancellationToken.None);
+
+        Assert.Empty(result.Lives);
+        Assert.Single(result.Warnings);
+        Assert.Contains("读取失败", result.Warnings[0], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Configuration_inspection_expands_extended_m3u_channel_metadata()
     {
         const string config = """

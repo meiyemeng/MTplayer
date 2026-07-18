@@ -24,6 +24,8 @@ public sealed class ApiDbContext(DbContextOptions<ApiDbContext> options) : DbCon
 
     public DbSet<AuditLogEntity> AuditLog => Set<AuditLogEntity>();
 
+    public DbSet<MemberPushEntity> MemberPushes => Set<MemberPushEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasSequence<long>("change_cursor_seq");

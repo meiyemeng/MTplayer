@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using MTPlayer.Contracts;
 using MTPlayer.Server.Auth;
@@ -42,7 +43,15 @@ public sealed record AdminUserSummary(
     bool EmailVerified,
     bool Disabled,
     DateTimeOffset CreatedAtUtc,
-    int ActiveDeviceCount);
+    int ActiveDeviceCount,
+    string MembershipLevel,
+    DateTimeOffset? MembershipExpiresAtUtc,
+    string? LastLoginIp,
+    string? LastLoginCity,
+    DateTimeOffset? LastLoginAtUtc,
+    IReadOnlyList<string> ConfigurationSourceAddresses,
+    IReadOnlyList<string> VideoInterfaceAddresses,
+    IReadOnlyList<string> LiveSourceAddresses);
 
 public sealed class DeviceService(
     ApiDbContext db,
@@ -264,18 +273,128 @@ public sealed class DeviceService(
         CancellationToken cancellationToken) =>
         SetUserStateAsync(userId, disabled, revokeAll: disabled, cancellationToken);
 
-    public async Task<IReadOnlyList<AdminUserSummary>> ListUsersAsync(CancellationToken cancellationToken) =>
-        await db.Users.AsNoTracking()
+    public async Task<IReadOnlyList<AdminUserSummary>> ListUsersAsync(CancellationToken cancellationToken)
+    {
+        var users = await db.Users.AsNoTracking()
             .OrderBy(user => user.Email)
-            .Select(user => new AdminUserSummary(
+            .Select(user => new
+            {
                 user.Id,
                 user.Email,
                 user.Role,
                 user.EmailVerified,
                 user.Disabled,
                 user.CreatedAtUtc,
-                db.DeviceSessions.Count(session => session.UserId == user.Id && session.RevokedAtUtc == null)))
+                ActiveDeviceCount = db.DeviceSessions.Count(session => session.UserId == user.Id && session.RevokedAtUtc == null),
+                user.MembershipLevel,
+                user.MembershipExpiresAtUtc,
+                user.LastLoginIp,
+                user.LastLoginCity,
+                user.LastLoginAtUtc,
+            })
             .ToListAsync(cancellationToken);
+        var records = await db.SyncRecords.AsNoTracking()
+            .Where(record => !record.IsDeleted &&
+                (record.Kind == SyncEntityKind.ConfigurationGroup || record.Kind == SyncEntityKind.Preference))
+            .Select(record => new { record.UserId, record.Kind, record.PayloadJson })
+            .ToListAsync(cancellationToken);
+        var inventories = records.GroupBy(record => record.UserId)
+            .ToDictionary(group => group.Key, group => ReadSourceInventory(group.Select(record => (record.Kind, record.PayloadJson))));
+
+        return users.Select(user =>
+        {
+            var sources = inventories.GetValueOrDefault(user.Id) ?? SourceInventory.Empty;
+            return new AdminUserSummary(
+                user.Id,
+                user.Email,
+                user.Role,
+                user.EmailVerified,
+                user.Disabled,
+                user.CreatedAtUtc,
+                user.ActiveDeviceCount,
+                user.MembershipLevel,
+                user.MembershipExpiresAtUtc,
+                user.LastLoginIp,
+                user.LastLoginCity,
+                user.LastLoginAtUtc,
+                sources.ConfigurationSources,
+                sources.VideoInterfaces,
+                sources.LiveSources);
+        }).ToArray();
+    }
+
+    public async Task<bool> SetMembershipAsync(
+        Guid userId,
+        string membershipLevel,
+        DateTimeOffset? expiresAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var normalized = membershipLevel?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (normalized is not ("free" or "member" or "vip")) return false;
+        var user = await db.Users.SingleOrDefaultAsync(value => value.Id == userId, cancellationToken);
+        if (user is null) return false;
+        user.MembershipLevel = normalized;
+        user.MembershipExpiresAtUtc = normalized == "free" ? null : expiresAtUtc;
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
+    private static SourceInventory ReadSourceInventory(IEnumerable<(SyncEntityKind Kind, string PayloadJson)> records)
+    {
+        var configurations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var videos = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var lives = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var record in records)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(record.PayloadJson);
+                var root = document.RootElement;
+                if (record.Kind == SyncEntityKind.ConfigurationGroup)
+                {
+                    AddAddress(root, "address", configurations);
+                    AddAddresses(root, "sites", "api", videos);
+                    AddAddresses(root, "lives", "address", lives);
+                }
+                else if (record.Kind == SyncEntityKind.Preference &&
+                    root.TryGetProperty("key", out var key) && key.GetString() == "customLives" &&
+                    root.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.String)
+                {
+                    using var custom = JsonDocument.Parse(value.GetString() ?? "[]");
+                    AddAddresses(custom.RootElement, null, "address", lives);
+                }
+            }
+            catch (JsonException) { }
+        }
+        return new SourceInventory(configurations.ToArray(), videos.ToArray(), lives.ToArray());
+    }
+
+    private static void AddAddresses(JsonElement root, string? arrayName, string addressName, HashSet<string> output)
+    {
+        var array = root;
+        if (arrayName is not null && (!root.TryGetProperty(arrayName, out array) || array.ValueKind != JsonValueKind.Array)) return;
+        if (array.ValueKind != JsonValueKind.Array) return;
+        foreach (var item in array.EnumerateArray()) AddAddress(item, addressName, output);
+    }
+
+    private static void AddAddress(JsonElement root, string name, HashSet<string> output)
+    {
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty(name, out var value) &&
+            value.ValueKind == JsonValueKind.String &&
+            Uri.TryCreate(value.GetString(), UriKind.Absolute, out var address) &&
+            address.Scheme is "http" or "https")
+        {
+            output.Add(address.ToString());
+        }
+    }
+
+    private sealed record SourceInventory(
+        IReadOnlyList<string> ConfigurationSources,
+        IReadOnlyList<string> VideoInterfaces,
+        IReadOnlyList<string> LiveSources)
+    {
+        public static SourceInventory Empty { get; } = new([], [], []);
+    }
 
     private async Task<bool> SetUserStateAsync(
         Guid userId,

@@ -8,7 +8,7 @@ namespace MTPlayer.Mac.Services;
 public sealed partial class CatalogueService : IDisposable
 {
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(18) };
-    public CatalogueService() => _http.DefaultRequestHeaders.UserAgent.ParseAdd("MTPlayer/1.1 macOS");
+    public CatalogueService() => _http.DefaultRequestHeaders.UserAgent.ParseAdd("MTPlayer/1.3 macOS");
 
     public async Task<List<Site>> LoadSitesAsync(IEnumerable<SourceGroup> groups, CancellationToken cancellationToken = default)
     {
@@ -16,6 +16,18 @@ public sealed partial class CatalogueService : IDisposable
         foreach (var group in groups.Where(x => x.Enabled))
             sites.AddRange(await LoadGroupAsync(group.Url, group.Id.ToString("N"), 0, cancellationToken));
         return sites.GroupBy(x => x.Key).Select(x => x.First()).ToList();
+    }
+
+    public async Task<List<LiveChannel>> LoadLiveChannelsAsync(IEnumerable<SourceGroup> groups, CancellationToken cancellationToken = default)
+    {
+        var channels = new List<LiveChannel>();
+        foreach (var group in groups.Where(value => value.Enabled))
+        {
+            try { channels.AddRange(await LoadGroupLivesAsync(group.Url, group.Name, 0, cancellationToken)); }
+            catch { }
+        }
+        return channels.Where(value => Uri.TryCreate(value.Url, UriKind.Absolute, out _))
+            .GroupBy(value => value.Url, StringComparer.OrdinalIgnoreCase).Select(value => value.First()).ToList();
     }
 
     public async Task<List<MediaEntry>> LatestAsync(IEnumerable<Site> sites, int limit, CancellationToken cancellationToken = default)
@@ -137,6 +149,114 @@ public sealed partial class CatalogueService : IDisposable
             }
         }
         return result;
+    }
+
+    private async Task<List<LiveChannel>> LoadGroupLivesAsync(string url, string fallbackGroup, int depth, CancellationToken cancellationToken)
+    {
+        if (depth > 3) return [];
+        var raw = await _http.GetStringAsync(url, cancellationToken);
+        using var document = JsonDocument.Parse(raw, new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip });
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object) return [];
+        var result = new List<LiveChannel>();
+        if (root.TryGetProperty("lives", out var lives) && lives.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in lives.EnumerateArray())
+            {
+                var name = item.ValueKind == JsonValueKind.Object ? Text(item, "name", fallbackGroup) : fallbackGroup;
+                var address = item.ValueKind == JsonValueKind.String ? item.GetString() : item.ValueKind == JsonValueKind.Object ? Text(item, "url", Text(item, "api")) : null;
+                await AddLiveAddressAsync(result, Resolve(url, address), name, cancellationToken);
+            }
+        }
+        if (root.TryGetProperty("channels", out var channels) && channels.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var channel in channels.EnumerateArray())
+            {
+                if (channel.ValueKind != JsonValueKind.Object || !channel.TryGetProperty("urls", out var urls) || urls.ValueKind != JsonValueKind.Array) continue;
+                var name = Text(channel, "name", fallbackGroup);
+                foreach (var item in urls.EnumerateArray())
+                {
+                    var address = item.ValueKind == JsonValueKind.String ? item.GetString() : item.ValueKind == JsonValueKind.Object ? Text(item, "url", Text(item, "api")) : null;
+                    await AddLiveAddressAsync(result, Resolve(url, address), name, cancellationToken);
+                }
+            }
+        }
+        if (root.TryGetProperty("urls", out var groups) && groups.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in groups.EnumerateArray())
+            {
+                var child = item.ValueKind == JsonValueKind.String ? item.GetString() : item.ValueKind == JsonValueKind.Object ? Text(item, "url", Text(item, "api")) : null;
+                if (!string.IsNullOrWhiteSpace(child)) result.AddRange(await LoadGroupLivesAsync(Resolve(url, child)!, fallbackGroup, depth + 1, cancellationToken));
+            }
+        }
+        return result;
+    }
+
+    private async Task AddLiveAddressAsync(List<LiveChannel> result, string? rawAddress, string group, CancellationToken cancellationToken)
+    {
+        var address = DecodeProxyAddress(rawAddress);
+        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https")) return;
+        if (uri.AbsolutePath.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase))
+        {
+            result.Add(new LiveChannel { Group = group, Name = group, Url = uri.ToString() });
+            return;
+        }
+        try
+        {
+            var playlist = await _http.GetStringAsync(uri, cancellationToken);
+            result.AddRange(playlist.Contains("#EXTM3U", StringComparison.OrdinalIgnoreCase) ? ParseM3u(group, playlist) : ParseTxt(group, playlist));
+        }
+        catch { }
+    }
+
+    private static List<LiveChannel> ParseM3u(string fallbackGroup, string text)
+    {
+        var result = new List<LiveChannel>();
+        string? name = null; var group = fallbackGroup; var logo = string.Empty;
+        foreach (var raw in text.Replace("\r", string.Empty).Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.StartsWith("#EXTINF", StringComparison.OrdinalIgnoreCase))
+            {
+                var comma = line.IndexOf(','); name = comma >= 0 ? line[(comma + 1)..].Trim() : "直播频道";
+                group = Attribute(line, "group-title", fallbackGroup); logo = Attribute(line, "tvg-logo", string.Empty);
+            }
+            else if (Uri.TryCreate(line, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
+            {
+                result.Add(new LiveChannel { Group = group, Name = string.IsNullOrWhiteSpace(name) ? "直播频道" : name, Url = uri.ToString(), Logo = logo });
+                name = null; group = fallbackGroup; logo = string.Empty;
+            }
+        }
+        return result;
+    }
+
+    private static List<LiveChannel> ParseTxt(string fallbackGroup, string text)
+    {
+        var result = new List<LiveChannel>(); var group = fallbackGroup;
+        foreach (var raw in text.Replace("\r", string.Empty).Split('\n'))
+        {
+            var parts = raw.Trim().Split(',', 2); if (parts.Length != 2) continue;
+            if (parts[1].Trim().Equals("#genre#", StringComparison.OrdinalIgnoreCase)) { group = parts[0].Trim(); continue; }
+            if (Uri.TryCreate(parts[1].Trim(), UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https") result.Add(new LiveChannel { Group = group, Name = parts[0].Trim(), Url = uri.ToString() });
+        }
+        return result;
+    }
+
+    private static string Attribute(string line, string name, string fallback)
+    {
+        var match = Regex.Match(line, $"{Regex.Escape(name)}=\"(?<value>[^\"]*)\"", RegexOptions.IgnoreCase);
+        return match.Success ? match.Groups["value"].Value : fallback;
+    }
+
+    private static string? Resolve(string parent, string? child) => string.IsNullOrWhiteSpace(child) ? null : new Uri(new Uri(parent), child).ToString();
+    private static string? DecodeProxyAddress(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || !raw.StartsWith("proxy://", StringComparison.OrdinalIgnoreCase)) return raw;
+        var index = raw.IndexOf("ext=", StringComparison.OrdinalIgnoreCase); if (index < 0) return null;
+        var value = Uri.UnescapeDataString(raw[(index + 4)..]);
+        if (value.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || value.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) return value;
+        try { var normalized = value.Replace('-', '+').Replace('_', '/').PadRight((value.Length + 3) / 4 * 4, '='); return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(normalized)); }
+        catch { return null; }
     }
 
     private static Dictionary<string, string> ParseQuery(string query) => query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries).Select(x => x.Split('=', 2)).ToDictionary(x => Uri.UnescapeDataString(x[0]), x => x.Length > 1 ? Uri.UnescapeDataString(x[1]) : string.Empty);

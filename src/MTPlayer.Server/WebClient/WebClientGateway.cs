@@ -20,7 +20,11 @@ public sealed record WebLiveDto(
     string Group = "直播",
     string? LogoAddress = null);
 public sealed record WebConfigRequest(Guid GroupId, string Url);
-public sealed record WebConfigResponse(IReadOnlyList<WebSiteDto> Sites, IReadOnlyList<WebLiveDto> Lives);
+public sealed record WebLiveInspectRequest(string Name, string Url);
+public sealed record WebConfigResponse(
+    IReadOnlyList<WebSiteDto> Sites,
+    IReadOnlyList<WebLiveDto> Lives,
+    IReadOnlyList<string> Warnings);
 public sealed record WebCatalogueRequest(IReadOnlyList<WebSiteDto> Sites, string? Keyword = null, int Limit = 60);
 public sealed record WebDetailRequest(WebSiteDto Site, string Id);
 public sealed record WebSignRequest(string Url);
@@ -86,8 +90,28 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
         if (request.GroupId == Guid.Empty) throw new ArgumentException("配置源标识无效。");
         var sites = new Dictionary<string, WebSiteDto>(StringComparer.Ordinal);
         var lives = new Dictionary<string, WebLiveDto>(StringComparer.OrdinalIgnoreCase);
-        await InspectCoreAsync(request.GroupId.ToString("N"), RequireAddress(request.Url), 0, sites, lives, cancellationToken);
-        return new WebConfigResponse(sites.Values.ToArray(), lives.Values.ToArray());
+        var warnings = new List<string>();
+        await InspectCoreAsync(
+            request.GroupId.ToString("N"),
+            RequireAddress(request.Url),
+            0,
+            sites,
+            lives,
+            warnings,
+            cancellationToken);
+        return new WebConfigResponse(sites.Values.ToArray(), lives.Values.ToArray(), warnings);
+    }
+
+    public async Task<WebConfigResponse> InspectLiveAsync(
+        WebLiveInspectRequest request,
+        CancellationToken cancellationToken)
+    {
+        var name = string.IsNullOrWhiteSpace(request.Name) ? "自定义直播" : request.Name.Trim();
+        if (name.Length > 200) throw new ArgumentException("直播源名称不能超过 200 个字符。");
+        var lives = new Dictionary<string, WebLiveDto>(StringComparer.OrdinalIgnoreCase);
+        var warnings = new List<string>();
+        await AddLiveAddressAsync(name, RequireAddress(request.Url).ToString(), null, null, lives, warnings, cancellationToken);
+        return new WebConfigResponse([], lives.Values.ToArray(), warnings);
     }
 
     public async Task<IReadOnlyList<WebItemDto>> LatestAsync(WebCatalogueRequest request, CancellationToken cancellationToken)
@@ -183,6 +207,7 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
         int depth,
         Dictionary<string, WebSiteDto> sites,
         Dictionary<string, WebLiveDto> lives,
+        List<string> warnings,
         CancellationToken cancellationToken)
     {
         if (depth > 3) return;
@@ -211,13 +236,13 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
         }
 
         foreach (var live in parsed.Profile.Lives)
-            await AddLiveSourceAsync(live, lives, cancellationToken);
+            await AddLiveSourceAsync(live, lives, warnings, cancellationToken);
 
         var child = 0;
         foreach (var depot in parsed.Profile.Urls)
         {
             if (!Uri.TryCreate(address, depot.Url, out var childAddress) || !IsHttp(childAddress)) continue;
-            await InspectCoreAsync($"{groupKey}:g{++child}", childAddress, depth + 1, sites, lives, cancellationToken);
+            await InspectCoreAsync($"{groupKey}:g{++child}", childAddress, depth + 1, sites, lives, warnings, cancellationToken);
         }
     }
 
@@ -383,13 +408,69 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
     private async Task AddLiveSourceAsync(
         TvBoxLive live,
         Dictionary<string, WebLiveDto> lives,
+        List<string> warnings,
         CancellationToken cancellationToken)
     {
+        await AddNestedLiveSourcesAsync(live, lives, warnings, cancellationToken);
         var liveAddress = FirstAddress(live.Url, live.Api, live.Ext);
         if (liveAddress is null) return;
         var sourceName = string.IsNullOrWhiteSpace(live.Name) ? $"直播源 {lives.Count + 1}" : live.Name.Trim();
         var epgTemplate = ExtensionString(live, "epg");
         var logoTemplate = ExtensionString(live, "logo");
+
+        await AddLiveAddressAsync(
+            sourceName,
+            liveAddress,
+            epgTemplate,
+            logoTemplate,
+            lives,
+            warnings,
+            cancellationToken);
+    }
+
+    private async Task AddNestedLiveSourcesAsync(
+        TvBoxLive live,
+        Dictionary<string, WebLiveDto> lives,
+        List<string> warnings,
+        CancellationToken cancellationToken)
+    {
+        if (!live.ExtensionData.TryGetValue("channels", out var channels) ||
+            channels.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        foreach (var channel in channels.EnumerateArray())
+        {
+            if (channel.ValueKind != JsonValueKind.Object) continue;
+            var name = ReadString(channel, "name") ?? live.Name;
+            if (string.IsNullOrWhiteSpace(name)) name = $"直播源 {lives.Count + 1}";
+            var epg = ReadString(channel, "epg") ?? ExtensionString(live, "epg");
+            var logo = ReadString(channel, "logo") ?? ExtensionString(live, "logo");
+            if (!channel.TryGetProperty("urls", out var urls) || urls.ValueKind != JsonValueKind.Array) continue;
+
+            foreach (var rawUrl in urls.EnumerateArray())
+            {
+                if (rawUrl.ValueKind != JsonValueKind.String ||
+                    !TryReadLivePlaylistAddress(rawUrl.GetString(), out var address))
+                {
+                    continue;
+                }
+
+                await AddLiveAddressAsync(name, address, epg, logo, lives, warnings, cancellationToken);
+            }
+        }
+    }
+
+    private async Task AddLiveAddressAsync(
+        string sourceName,
+        string liveAddress,
+        string? epgTemplate,
+        string? logoTemplate,
+        Dictionary<string, WebLiveDto> lives,
+        List<string> warnings,
+        CancellationToken cancellationToken)
+    {
 
         if (LooksLikeDirectLiveMedia(liveAddress))
         {
@@ -426,12 +507,54 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
         }
         catch (Exception exception) when (
             !cancellationToken.IsCancellationRequested &&
-            exception is HttpRequestException or InvalidDataException or TaskCanceledException)
+            exception is HttpRequestException or InvalidDataException or TaskCanceledException or ArgumentException)
         {
-            // An unavailable remote playlist must not break the rest of the
-            // configuration import. It will be retried on the next source refresh.
+            if (warnings.Count < 20)
+            {
+                warnings.Add($"直播源“{sourceName}”读取失败：{FriendlyLiveError(exception)}");
+            }
         }
     }
+
+    private static string? ReadString(JsonElement value, string name) =>
+        value.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
+
+    private static bool TryReadLivePlaylistAddress(string? value, out string address)
+    {
+        address = string.Empty;
+        var candidate = value?.Trim() ?? string.Empty;
+        if (candidate.StartsWith("proxy://", StringComparison.OrdinalIgnoreCase))
+        {
+            var query = candidate["proxy://".Length..];
+            if (query.Length > 0 && query[0] == '?') query = query[1..];
+            var parameters = QueryHelpers.ParseQuery(query);
+            candidate = parameters.TryGetValue("ext", out var extension)
+                ? extension.ToString().Trim()
+                : string.Empty;
+            if (!Uri.TryCreate(candidate, UriKind.Absolute, out _))
+            {
+                try { candidate = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(candidate)); }
+                catch (FormatException)
+                {
+                    try { candidate = Encoding.UTF8.GetString(Convert.FromBase64String(candidate)); }
+                    catch (FormatException) { candidate = string.Empty; }
+                }
+            }
+        }
+
+        if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri) || !IsHttp(uri)) return false;
+        address = uri.ToString();
+        return true;
+    }
+
+    private static string FriendlyLiveError(Exception exception) => exception switch
+    {
+        HttpRequestException { StatusCode: { } status } => $"HTTP {(int)status}",
+        TaskCanceledException => "连接超时",
+        _ => exception.Message,
+    };
 
     private static void AddLive(Dictionary<string, WebLiveDto> lives, WebLiveDto channel) =>
         lives[$"{channel.Name}|{channel.Address}"] = channel;

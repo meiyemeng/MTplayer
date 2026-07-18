@@ -32,6 +32,14 @@ public sealed class Site
     public string Api { get; set; } = string.Empty;
 }
 
+public sealed class LiveChannel
+{
+    public string Group { get; set; } = "直播";
+    public string Name { get; set; } = "直播频道";
+    public string Url { get; set; } = string.Empty;
+    public string Logo { get; set; } = string.Empty;
+}
+
 public sealed class MediaEntry
 {
     public string SiteKey { get; set; } = string.Empty;

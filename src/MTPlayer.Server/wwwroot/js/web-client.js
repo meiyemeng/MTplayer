@@ -209,10 +209,11 @@
             const result = await api("/api/v1/web/config/inspect", { method: "POST", body: JSON.stringify({ groupId: id, url: address }) });
             group.sites = result.sites || [];
             group.lives = result.lives || [];
+            group.warnings = result.warnings || [];
             state.groups.push(group);
             saveState(); renderSettings();
             event.target.reset();
-            toast(`已添加 ${group.sites.length} 个可用接口。`);
+            toast(`已添加 ${group.sites.length} 个影视接口、${group.lives.length} 个直播频道。${group.warnings.length ? ` ${group.warnings[0]}` : ""}`, group.warnings.length > 0 && group.lives.length === 0);
             await refreshHome(false);
             scheduleSync();
         } catch (error) { toast(error.message, true); }
@@ -223,9 +224,12 @@
         const result = await api("/api/v1/web/config/inspect", { method: "POST", body: JSON.stringify({ groupId: group.id, url: group.address }) });
         group.sites = result.sites || [];
         group.lives = result.lives || [];
+        group.warnings = result.warnings || [];
         group.lastUpdatedUtc = now();
+        touch(group);
         saveState();
-        if (notify) toast(`${group.name} 已更新：${group.sites.length} 个接口。`);
+        scheduleSync();
+        if (notify) toast(`${group.name} 已更新：${group.sites.length} 个影视接口、${group.lives.length} 个直播频道。${group.warnings.length ? ` ${group.warnings[0]}` : ""}`, group.warnings.length > 0 && group.lives.length === 0);
     }
 
     async function refreshGroupById(id, notify) {
@@ -265,9 +269,12 @@
     function deleteGroup(id) {
         const group = state.groups.find(value => value.id === id);
         if (!group || !confirm(`确定删除配置源“${group.name}”吗？`)) return;
-        if (group.version > 0) { group.isDeleted = true; touch(group); }
+        const removedSiteKeys = new Set((group.sites || []).map(site => site.key));
+        state.disabledSiteKeys = state.disabledSiteKeys.filter(key => !removedSiteKeys.has(key));
+        if (group.version > 0 || state.auth.accessToken) { group.isDeleted = true; group.sites = []; group.lives = []; touch(group); }
         else state.groups = state.groups.filter(value => value.id !== id);
-        saveState(); renderSettings(); refreshHome(false); scheduleSync();
+        catalogue = [];
+        saveState(); renderSettings(); renderLive(); refreshHome(false); scheduleSync();
     }
 
     function enabledSites() {
@@ -476,12 +483,21 @@
         saveState(); renderHistory(); scheduleSync();
     }
 
-    function addLive(event) {
+    async function addLive(event) {
         event.preventDefault(); const name = $("#live-name").value.trim() || "自定义频道"; const address = $("#live-url").value.trim();
         if (!/^https?:\/\//i.test(address)) { toast("直播地址必须以 http:// 或 https:// 开头。", true); return; }
-        state.customLives.push({ id: crypto.randomUUID(), name, address }); saveState(); renderLive(); event.target.reset(); toast("直播频道已添加。此数据仅保存在当前设备。 ");
+        busy(true, "正在读取直播源…");
+        try {
+            const result = await api("/api/v1/web/live/inspect", { method: "POST", body: JSON.stringify({ name, url: address }) });
+            if (!result.lives?.length) throw new Error(result.warnings?.[0] || "该地址没有识别到可播放的直播频道。");
+            for (const channel of result.lives) state.customLives.push({ ...channel, id: crypto.randomUUID() });
+            await setPreference("customLives", state.customLives);
+            renderLive(); event.target.reset();
+            toast(`已添加 ${result.lives.length} 个直播频道。${result.warnings?.length ? ` ${result.warnings[0]}` : ""}`);
+        } catch (error) { toast(error.message, true); }
+        finally { busy(false); }
     }
-    function removeLive(id) { state.customLives = state.customLives.filter(item => item.id !== id); saveState(); renderLive(); }
+    async function removeLive(id) { state.customLives = state.customLives.filter(item => item.id !== id); await setPreference("customLives", state.customLives); renderLive(); }
     function renderLive() {
         const configured = state.groups.filter(group => group.isEnabled && !group.isDeleted).flatMap(group => (group.lives || []).map(item => ({ ...item, id: "", origin: group.name })));
         const custom = state.customLives.map(item => ({ ...item, group: item.group || "自定义", origin: "自定义" }));
@@ -500,7 +516,7 @@
 
     function renderSettings() {
         const groups = state.groups.filter(group => !group.isDeleted);
-        $("#source-list").innerHTML = groups.length ? groups.map(group => `<div class="stack-item"><div><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.address)} · ${group.sites?.length || 0} 个接口${group.lastUpdatedUtc ? ` · ${new Date(group.lastUpdatedUtc).toLocaleString()}` : ""}</small></div><div class="item-actions"><button data-action="toggle-group" data-id="${group.id}">${group.isEnabled ? "停用" : "启用"}</button><button data-action="refresh-group" data-id="${group.id}">更新</button><button class="danger" data-action="delete-group" data-id="${group.id}">删除</button></div></div>`).join("") : empty("尚未添加配置源。");
+        $("#source-list").innerHTML = groups.length ? groups.map(group => `<div class="stack-item"><div><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.address)} · ${group.sites?.length || 0} 个影视接口 · ${group.lives?.length || 0} 个直播频道${group.lastUpdatedUtc ? ` · ${new Date(group.lastUpdatedUtc).toLocaleString()}` : ""}</small>${group.warnings?.length ? `<small class="source-warning">${escapeHtml(group.warnings[0])}</small>` : ""}</div><div class="item-actions"><button data-action="toggle-group" data-id="${group.id}">${group.isEnabled ? "停用" : "启用"}</button><button data-action="refresh-group" data-id="${group.id}">更新</button><button class="danger" data-action="delete-group" data-id="${group.id}">删除</button></div></div>`).join("") : empty("尚未添加配置源。");
         const sites = allSites(); const disabled = new Set(state.disabledSiteKeys);
         $("#interface-summary").textContent = `${sites.length - state.disabledSiteKeys.filter(key => sites.some(site => site.key === key)).length} / ${sites.length} 个接口已启用`;
         $("#interface-list").innerHTML = sites.length ? sites.map(site => `<label title="${attr(site.api)}"><input type="checkbox" data-site-key="${attr(site.key)}" ${disabled.has(site.key) ? "" : "checked"} /><span>${escapeHtml(site.name)}</span></label>`).join("") : empty("添加配置源后会在这里显示播放接口。");
@@ -601,7 +617,7 @@
     function dirtyEntities() { return [...state.groups, ...state.favorites, ...state.history, ...state.skipMarkers, ...Object.values(state.preferenceStates)].filter(item => item.dirty); }
     function toMutation(entity) {
         let kind, payload;
-        if ("address" in entity) { kind = "ConfigurationGroup"; payload = { name: entity.name, address: entity.address, isEnabled: entity.isEnabled }; }
+        if ("address" in entity) { kind = "ConfigurationGroup"; payload = { name: entity.name, address: entity.address, isEnabled: entity.isEnabled, sites: entity.sites || [], lives: entity.lives || [] }; }
         else if ("introEndSeconds" in entity) { kind = "SkipMarker"; payload = pick(entity, ["sourceKey", "contentId", "interfaceKey", "lineName", "introEndSeconds", "outroRemainingSeconds"]); }
         else if ("positionMs" in entity) { kind = "PlaybackHistory"; payload = pick(entity, ["sourceKey", "contentId", "interfaceKey", "lineName", "episodeIndex", "positionMs", "durationMs", "sourceIndex", "category", "title", "caption", "coverUrl"]); }
         else if ("contentId" in entity) { kind = "Favorite"; payload = pick(entity, ["sourceKey", "contentId", "category", "title", "caption", "coverUrl"]); }
@@ -611,7 +627,7 @@
     function applyRemote(mutation) {
         const payload = mutation.payload || {}, base = { id: mutation.id, version: mutation.baseVersion || mutation.version || 0, modifiedAtUtc: mutation.modifiedAtUtc, isDeleted: mutation.isDeleted, dirty: false };
         let collection, entity;
-        if (mutation.kind === "ConfigurationGroup") { collection = state.groups; entity = { ...base, ...payload, sites: [], lives: [] }; }
+        if (mutation.kind === "ConfigurationGroup") { collection = state.groups; entity = { ...base, ...payload, sites: Array.isArray(payload.sites) ? payload.sites : [], lives: Array.isArray(payload.lives) ? payload.lives : [] }; }
         else if (mutation.kind === "Favorite") { collection = state.favorites; entity = { ...base, ...payload }; }
         else if (mutation.kind === "PlaybackHistory") { collection = state.history; entity = { ...base, ...payload }; }
         else if (mutation.kind === "SkipMarker") { collection = state.skipMarkers; entity = { ...base, ...payload }; }
@@ -620,13 +636,16 @@
             if (!mutation.isDeleted) {
                 try { state.preferences[payload.key] = JSON.parse(payload.value); } catch { state.preferences[payload.key] = payload.value; }
                 if (payload.key === "disabledSiteKeys" && Array.isArray(state.preferences[payload.key])) state.disabledSiteKeys = state.preferences[payload.key];
+                if (payload.key === "customLives" && Array.isArray(state.preferences[payload.key])) state.customLives = state.preferences[payload.key];
             }
             return;
         } else return;
         const index = collection.findIndex(item => item.id === mutation.id);
         if (index >= 0) {
             if (collection[index].dirty && Date.parse(collection[index].modifiedAtUtc) > Date.parse(mutation.modifiedAtUtc)) return;
-            entity = { ...collection[index], ...entity, sites: collection[index].sites || entity.sites, lives: collection[index].lives || entity.lives };
+            entity = { ...collection[index], ...entity };
+            if (!Array.isArray(payload.sites)) entity.sites = collection[index].sites || [];
+            if (!Array.isArray(payload.lives)) entity.lives = collection[index].lives || [];
             collection[index] = entity;
         } else collection.push(entity);
     }

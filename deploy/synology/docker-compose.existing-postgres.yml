@@ -2,7 +2,7 @@ name: mtplayer
 
 services:
   mt-api:
-    image: mtplayer/server:1.2.0-amd64
+    image: mtplayer/server:1.3.0-amd64
     restart: unless-stopped
     environment:
       ASPNETCORE_URLS: http://+:8080

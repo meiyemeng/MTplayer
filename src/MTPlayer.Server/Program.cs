@@ -14,6 +14,7 @@ using MTPlayer.Server.Devices;
 using MTPlayer.Server.Diagnostics;
 using MTPlayer.Server.Mail;
 using MTPlayer.Server.Maintenance;
+using MTPlayer.Server.Membership;
 using MTPlayer.Server.Security;
 using MTPlayer.Server.Settings;
 using MTPlayer.Server.Sync;
@@ -109,13 +110,19 @@ builder.Services.AddScoped<CurrentUser>();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<DeviceService>();
 builder.Services.AddScoped<SyncService>();
+builder.Services.AddScoped<MembershipService>();
+builder.Services.AddHttpClient<ClientLocationService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(4);
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("MTPlayer-Server/1.3");
+});
 builder.Services.AddSingleton<WebProxySigner>();
 builder.Services.AddHttpClient<WebClientGateway>(client =>
     {
         client.Timeout = TimeSpan.FromSeconds(25);
         client.DefaultRequestHeaders.UserAgent.ParseAdd(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 MTPlayer-Web/1.2");
+            "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 MTPlayer-Web/1.3");
         client.DefaultRequestHeaders.AcceptLanguage.ParseAdd("zh-CN,zh;q=0.9,en;q=0.7");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/json,text/plain,image/*,video/*,*/*");
     })

@@ -44,7 +44,9 @@ public static class SyncPayloadValidator
             SyncEntityKind.ConfigurationGroup =>
                 String(mutation.Payload, "name", 200) &&
                 HttpAddress(mutation.Payload, "address") &&
-                Boolean(mutation.Payload, "isEnabled") ? null : "invalid_configuration_group",
+                Boolean(mutation.Payload, "isEnabled") &&
+                OptionalSites(mutation.Payload) &&
+                OptionalLives(mutation.Payload) ? null : "invalid_configuration_group",
             SyncEntityKind.Favorite =>
                 String(mutation.Payload, "sourceKey", 500) &&
                 String(mutation.Payload, "contentId", 500) &&
@@ -91,4 +93,25 @@ public static class SyncPayloadValidator
         String(value, name, 4096) &&
         Uri.TryCreate(value.GetProperty(name).GetString(), UriKind.Absolute, out var uri) &&
         (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    private static bool OptionalSites(JsonElement value)
+    {
+        if (!value.TryGetProperty("sites", out var sites)) return true;
+        return sites.ValueKind == JsonValueKind.Array && sites.GetArrayLength() <= 500 &&
+            sites.EnumerateArray().All(site =>
+                site.ValueKind == JsonValueKind.Object &&
+                String(site, "key", 500) &&
+                String(site, "name", 500) &&
+                HttpAddress(site, "api"));
+    }
+
+    private static bool OptionalLives(JsonElement value)
+    {
+        if (!value.TryGetProperty("lives", out var lives)) return true;
+        return lives.ValueKind == JsonValueKind.Array && lives.GetArrayLength() <= 2_000 &&
+            lives.EnumerateArray().All(live =>
+                live.ValueKind == JsonValueKind.Object &&
+                String(live, "name", 500) &&
+                HttpAddress(live, "address"));
+    }
 }

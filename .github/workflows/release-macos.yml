@@ -1,0 +1,50 @@
+name: Build macOS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without the v prefix
+        required: true
+        default: 1.3.0
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-14
+    strategy:
+      matrix:
+        include:
+          - runtime: osx-x64
+            label: Intel
+          - runtime: osx-arm64
+            label: Apple-Silicon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.422
+      - name: Publish
+        run: dotnet publish src/MTPlayer.Mac/MTPlayer.Mac.csproj -c Release -r ${{ matrix.runtime }} --self-contained true -o artifacts/macos/publish-${{ matrix.runtime }}
+      - name: Create app bundle
+        shell: pwsh
+        run: ./packaging/macos/build-bundle.ps1 -Version '${{ inputs.version }}' -Runtime '${{ matrix.runtime }}'
+      - name: Ad-hoc sign and package
+        run: |
+          chmod +x artifacts/macos/bundle/MTPlayer.app/Contents/MacOS/MTPlayer
+          codesign --force --deep --sign - artifacts/macos/bundle/MTPlayer.app
+          ditto -c -k --sequesterRsrc --keepParent artifacts/macos/bundle/MTPlayer.app MTPlayer-macOS-${{ matrix.label }}-${{ inputs.version }}.zip
+          hdiutil create -volname "MT播放器" -srcfolder artifacts/macos/bundle/MTPlayer.app -ov -format UDZO MTPlayer-macOS-${{ matrix.label }}-${{ inputs.version }}.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MTPlayer-macOS-${{ matrix.label }}-${{ inputs.version }}
+          path: |
+            MTPlayer-macOS-${{ matrix.label }}-${{ inputs.version }}.zip
+            MTPlayer-macOS-${{ matrix.label }}-${{ inputs.version }}.dmg
+          if-no-files-found: error
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload v${{ inputs.version }} MTPlayer-macOS-${{ matrix.label }}-${{ inputs.version }}.zip MTPlayer-macOS-${{ matrix.label }}-${{ inputs.version }}.dmg --clobber

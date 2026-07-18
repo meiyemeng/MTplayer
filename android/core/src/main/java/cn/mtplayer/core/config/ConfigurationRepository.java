@@ -13,6 +13,7 @@ import com.google.gson.reflect.TypeToken;
 import java.io.IOException;
 import java.lang.reflect.Type;
 import java.net.URI;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -23,6 +24,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import cn.mtplayer.core.model.Site;
+import cn.mtplayer.core.model.LiveChannel;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
@@ -113,6 +115,147 @@ public final class ConfigurationRepository {
         return new ArrayList<>(merged.values());
     }
 
+    public List<LiveChannel> enabledLiveChannels() throws IOException {
+        Map<String, LiveChannel> merged = new LinkedHashMap<>();
+        IOException lastFailure = null;
+        for (SourceGroup group : groups()) {
+            if (!group.enabled) continue;
+            List<LiveChannel> channels = readLiveCache(group.id);
+            try {
+                List<LiveChannel> fresh = loadLiveChannels(group.url, group.name, 0);
+                if (!fresh.isEmpty()) {
+                    prefs.edit().putString("livecache." + group.id, gson.toJson(fresh)).apply();
+                    channels = fresh;
+                }
+            } catch (IOException exception) {
+                lastFailure = exception;
+            }
+            for (LiveChannel channel : channels) {
+                if (channel.url != null && !channel.url.isEmpty()) merged.put(channel.url, channel);
+            }
+        }
+        if (merged.isEmpty() && lastFailure != null) throw lastFailure;
+        return new ArrayList<>(merged.values());
+    }
+
+    private List<LiveChannel> loadLiveChannels(String configUrl, String fallbackGroup, int depth) throws IOException {
+        if (depth > 3) return Collections.emptyList();
+        JsonElement root = parsePossiblyWrapped(download(configUrl));
+        if (!root.isJsonObject()) return Collections.emptyList();
+        JsonObject object = root.getAsJsonObject();
+        List<LiveChannel> result = new ArrayList<>();
+        JsonArray lives = array(object, "lives");
+        if (lives != null) {
+            for (JsonElement item : lives) {
+                String name = fallbackGroup;
+                String address = null;
+                if (item.isJsonPrimitive()) address = item.getAsString();
+                else if (item.isJsonObject()) {
+                    JsonObject live = item.getAsJsonObject();
+                    name = first(text(live, "name"), fallbackGroup, "直播");
+                    address = first(text(live, "url"), text(live, "api"), text(live, "address"));
+                }
+                addLiveAddress(result, name, resolve(configUrl, address), depth);
+            }
+        }
+        JsonArray channels = array(object, "channels");
+        if (channels != null) {
+            for (JsonElement channelElement : channels) {
+                if (!channelElement.isJsonObject()) continue;
+                JsonObject channel = channelElement.getAsJsonObject();
+                String name = first(text(channel, "name"), fallbackGroup, "直播");
+                JsonArray urls = array(channel, "urls");
+                if (urls == null) continue;
+                for (JsonElement urlElement : urls) {
+                    String address = urlElement.isJsonPrimitive() ? urlElement.getAsString()
+                            : urlElement.isJsonObject() ? first(text(urlElement.getAsJsonObject(), "url"), text(urlElement.getAsJsonObject(), "api")) : null;
+                    addLiveAddress(result, name, resolve(configUrl, address), depth);
+                }
+            }
+        }
+        JsonArray urls = array(object, "urls");
+        if (urls != null) {
+            for (JsonElement item : urls) {
+                String child = item.isJsonPrimitive() ? item.getAsString()
+                        : item.isJsonObject() ? first(text(item.getAsJsonObject(), "url"), text(item.getAsJsonObject(), "api")) : null;
+                if (child != null && !child.trim().isEmpty()) result.addAll(loadLiveChannels(resolve(configUrl, child.trim()), fallbackGroup, depth + 1));
+            }
+        }
+        return result;
+    }
+
+    private void addLiveAddress(List<LiveChannel> result, String group, String rawAddress, int depth) {
+        String address = decodeProxyAddress(rawAddress);
+        if (address == null || !(address.startsWith("http://") || address.startsWith("https://"))) return;
+        try {
+            if (address.toLowerCase().contains(".m3u8") && !address.toLowerCase().endsWith(".m3u") && !address.toLowerCase().endsWith(".txt")) {
+                result.add(new LiveChannel(group, group, address, ""));
+                return;
+            }
+            String playlist = download(address);
+            if (playlist.toUpperCase().contains("#EXTM3U")) result.addAll(parseM3u(group, playlist));
+            else result.addAll(parseTxt(group, playlist));
+        } catch (IOException | RuntimeException ignored) { }
+    }
+
+    private static List<LiveChannel> parseM3u(String fallbackGroup, String text) {
+        List<LiveChannel> result = new ArrayList<>();
+        String pendingName = null, pendingGroup = fallbackGroup, pendingLogo = "";
+        for (String raw : text.replace("\r", "").split("\n")) {
+            String line = raw.trim();
+            if (line.startsWith("#EXTINF")) {
+                int comma = line.indexOf(',');
+                pendingName = comma >= 0 ? line.substring(comma + 1).trim() : "直播频道";
+                pendingGroup = attribute(line, "group-title", fallbackGroup);
+                pendingLogo = attribute(line, "tvg-logo", "");
+            } else if (!line.isEmpty() && !line.startsWith("#") && (line.startsWith("http://") || line.startsWith("https://"))) {
+                result.add(new LiveChannel(pendingGroup, first(pendingName, "直播频道"), line, pendingLogo));
+                pendingName = null; pendingGroup = fallbackGroup; pendingLogo = "";
+            }
+        }
+        return result;
+    }
+
+    private static List<LiveChannel> parseTxt(String fallbackGroup, String text) {
+        List<LiveChannel> result = new ArrayList<>();
+        String group = fallbackGroup;
+        for (String raw : text.replace("\r", "").split("\n")) {
+            String line = raw.trim();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+            String[] parts = line.split(",", 2);
+            if (parts.length < 2) continue;
+            if ("#genre#".equalsIgnoreCase(parts[1].trim())) { group = parts[0].trim(); continue; }
+            String address = parts[1].trim();
+            if (address.startsWith("http://") || address.startsWith("https://")) result.add(new LiveChannel(group, parts[0].trim(), address, ""));
+        }
+        return result;
+    }
+
+    private static String attribute(String line, String name, String fallback) {
+        String token = name + "=\"";
+        int start = line.indexOf(token);
+        if (start < 0) return fallback;
+        start += token.length();
+        int end = line.indexOf('"', start);
+        return end > start ? line.substring(start, end) : fallback;
+    }
+
+    private static String decodeProxyAddress(String raw) {
+        if (raw == null) return null;
+        String value = raw.trim();
+        if (!value.startsWith("proxy://")) return value;
+        int index = value.indexOf("ext=");
+        if (index < 0) return null;
+        String ext = value.substring(index + 4);
+        try { ext = URLDecoder.decode(ext, StandardCharsets.UTF_8.name()); } catch (Exception ignored) { }
+        if (ext.startsWith("http://") || ext.startsWith("https://")) return ext;
+        try { return new String(Base64.decode(ext, Base64.URL_SAFE | Base64.NO_WRAP), StandardCharsets.UTF_8); }
+        catch (IllegalArgumentException exception) {
+            try { return new String(Base64.decode(ext, Base64.DEFAULT), StandardCharsets.UTF_8); }
+            catch (IllegalArgumentException ignored) { return null; }
+        }
+    }
+
     private List<Site> loadSites(String url, String groupId, int depth) throws IOException {
         if (depth > 3) return Collections.emptyList();
         String body = download(url);
@@ -152,7 +295,7 @@ public final class ConfigurationRepository {
     }
 
     private String download(String url) throws IOException {
-        Request request = new Request.Builder().url(url).header("User-Agent", "MTPlayer/1.1 Android").build();
+        Request request = new Request.Builder().url(url).header("User-Agent", "MTPlayer/1.3 Android").build();
         try (Response response = http.newCall(request).execute()) {
             if (!response.isSuccessful() || response.body() == null) throw new IOException("配置下载失败：HTTP " + response.code());
             if (response.body().contentLength() > MAX_CONFIG_BYTES) throw new IOException("配置文件超过 10 MiB");
@@ -194,6 +337,13 @@ public final class ConfigurationRepository {
         Type type = new TypeToken<List<Site>>(){}.getType();
         List<Site> sites = gson.fromJson(json, type);
         return sites == null ? new ArrayList<>() : sites;
+    }
+
+    private List<LiveChannel> readLiveCache(String id) {
+        String json = prefs.getString("livecache." + id, "[]");
+        Type type = new TypeToken<List<LiveChannel>>(){}.getType();
+        List<LiveChannel> channels = gson.fromJson(json, type);
+        return channels == null ? new ArrayList<>() : channels;
     }
 
     private void save(List<SourceGroup> groups) { prefs.edit().putString("groups", gson.toJson(groups)).apply(); }

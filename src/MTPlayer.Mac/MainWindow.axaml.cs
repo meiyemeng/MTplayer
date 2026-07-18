@@ -4,6 +4,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using MTPlayer.Mac.Services;
 
@@ -91,19 +92,29 @@ public sealed partial class MainWindow : Window, IDisposable
         PageHost.Content = new ScrollViewer { Content = root };
     }
 
-    private void ShowLive()
+    private async void ShowLive()
     {
         var root = ContentPage("直播频道", "打开 M3U8 / 直播流");
-        root.Children.Add(Note("输入你拥有播放权限的 HTTPS 直播流地址。"));
+        root.Children.Add(Note("输入你拥有播放权限的 HTTP 或 HTTPS 直播流地址。"));
         var url = new TextBox { Watermark = "https://.../live.m3u8" };
         var play = Primary("开始播放");
         play.HorizontalAlignment = HorizontalAlignment.Left;
         play.Click += (_, _) =>
         {
-            if (!Uri.TryCreate(url.Text, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) return;
+            if (!Uri.TryCreate(url.Text, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)) return;
             new PlayerWindow(uri.ToString(), "直播频道", "live:" + uri.GetHashCode()).Show();
         };
-        root.Children.Add(url); root.Children.Add(play); PageHost.Content = root;
+        var status = Note("正在读取配置中的直播频道…");
+        var channels = new WrapPanel { ItemWidth = 280, ItemHeight = 58 };
+        root.Children.Add(url); root.Children.Add(play); root.Children.Add(status); root.Children.Add(channels); PageHost.Content = new ScrollViewer { Content = root };
+        var values = await _catalogue.LoadLiveChannelsAsync(_settings.ConfigurationGroups);
+        status.Text = values.Count == 0 ? "配置中没有读取到可用直播频道。" : $"共识别 {values.Count} 个直播频道，点击即可播放。";
+        foreach (var channel in values)
+        {
+            var button = Secondary($"{channel.Group} · {channel.Name}");
+            button.Click += (_, _) => new PlayerWindow(channel.Url, channel.Name, "live:" + channel.Url.GetHashCode()).Show();
+            channels.Children.Add(button);
+        }
     }
 
     private void ShowAccount()
@@ -160,7 +171,7 @@ public sealed partial class MainWindow : Window, IDisposable
         }
         add.Click += (_, _) =>
         {
-            if (!Uri.TryCreate(url.Text, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) return;
+            if (!Uri.TryCreate(url.Text, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)) return;
             var existing = _settings.ConfigurationGroups.FirstOrDefault(x => string.Equals(x.Url, uri.ToString(), StringComparison.OrdinalIgnoreCase));
             if (existing is null) _settings.ConfigurationGroups.Add(new SourceGroup { Name = string.IsNullOrWhiteSpace(name.Text) ? $"配置源 {_settings.ConfigurationGroups.Count + 1}" : name.Text.Trim(), Url = uri.ToString(), Enabled = true });
             else existing.Enabled = true;
@@ -171,8 +182,12 @@ public sealed partial class MainWindow : Window, IDisposable
 
     private void ShowAbout()
     {
-        var root = ContentPage("关于软件", "MT播放器 macOS 1.1.0");
-        root.Children.Add(Note("原生 macOS 桌面客户端 · Intel 64 位（Apple Silicon 可通过 Rosetta 2 运行）\n\n软件不预置任何内容源，仅播放用户自行配置且有权访问的内容。用户应遵守所在地法律及内容授权规则。"));
+        var root = ContentPage("关于软件", "MT播放器 macOS 1.3.0");
+        root.Children.Add(Note("原生 macOS 桌面客户端 · Intel 64 位（Apple Silicon 可通过 Rosetta 2 运行）\n\n源码仓库：https://github.com/meiyemeng/MTplayer\n客户端下载：https://github.com/meiyemeng/MTplayer/releases/latest\n\n软件不预置、不存储、不上传、不分发任何影视内容，仅播放用户自行配置且有权访问的媒体。"));
+        root.Children.Add(new TextBlock { Text = "支持项目", Foreground = Brushes.White, FontSize = 22, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 20, 0, 8) });
+        using var donationStream = AssetLoader.Open(new Uri("avares://MTPlayer/Assets/alipay-donate.png"));
+        root.Children.Add(new Image { Source = new Bitmap(donationStream), Width = 260, Height = 390, Stretch = Stretch.Uniform, HorizontalAlignment = HorizontalAlignment.Left });
+        root.Children.Add(Note("支付宝扫码为自愿捐助，不解锁内容或会员权益，也不代表购买影视服务。"));
         PageHost.Content = root;
     }
 

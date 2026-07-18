@@ -1,7 +1,9 @@
 using System.Net.Mail;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using MTPlayer.Server.Mail;
+using MTPlayer.Server.Membership;
 using MTPlayer.Server.Settings;
+using MTPlayer.Server.Auth;
 
 namespace MTPlayer.Server.Admin;
 
@@ -15,7 +17,38 @@ public static class AdminEndpoints
         group.MapGet("/client-config", GetClientConfig);
         group.MapPut("/settings", UpdateSettingsAsync);
         group.MapPost("/email/test", SendTestEmailAsync).RequireRateLimiting("email-token");
+        group.MapGet("/member-pushes", (MembershipService memberships, CancellationToken ct) =>
+            memberships.ListAllAsync(ct));
+        group.MapPost("/member-pushes", async (MemberPushUpdate update, MembershipService memberships, HttpContext context, CancellationToken ct) =>
+            await SavePushAsync(null, update, memberships, context, ct));
+        group.MapPut("/member-pushes/{id:guid}", async (Guid id, MemberPushUpdate update, MembershipService memberships, HttpContext context, CancellationToken ct) =>
+            await SavePushAsync(id, update, memberships, context, ct));
+        group.MapDelete("/member-pushes/{id:guid}", async (Guid id, MembershipService memberships, CancellationToken ct) =>
+            await memberships.DeleteAsync(id, ct) == 1 ? Results.NoContent() : Results.NotFound());
+        group.MapPut("/members/{userId:guid}", async (Guid userId, MembershipUpdate update, MembershipService memberships, HttpContext context, CancellationToken ct) =>
+        {
+            try { return await memberships.SetMembershipAsync(userId, update, ct) ? Results.NoContent() : Results.NotFound(); }
+            catch (ArgumentException exception) { return Problem(context, "invalid_membership", exception.Message, StatusCodes.Status400BadRequest); }
+        });
+
+        routes.MapGet("/api/v1/member/pushes", async (HttpContext context, MembershipService memberships, CancellationToken ct) =>
+            CurrentUser.TryGetUserId(context.User, out var userId)
+                ? Results.Ok(await memberships.ListForUserAsync(userId, ct))
+                : Results.Unauthorized())
+            .RequireAuthorization("sync-access");
         return routes;
+    }
+
+    private static async Task<IResult> SavePushAsync(
+        Guid? id,
+        MemberPushUpdate update,
+        MembershipService memberships,
+        HttpContext context,
+        CancellationToken cancellationToken)
+    {
+        try { return Results.Ok(await memberships.SaveAsync(id, update, cancellationToken)); }
+        catch (ArgumentException exception) { return Problem(context, "invalid_member_push", exception.Message, StatusCodes.Status400BadRequest); }
+        catch (KeyNotFoundException) { return Results.NotFound(); }
     }
 
     private static IResult GetClientConfig(HttpContext context)

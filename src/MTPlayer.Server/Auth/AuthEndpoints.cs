@@ -43,7 +43,7 @@ public static class AuthEndpoints
         HttpContext context,
         CancellationToken cancellationToken)
     {
-        var result = await auth.LoginAsync(request, cancellationToken);
+        var result = await auth.LoginAsync(request, context, cancellationToken);
         return result.Status switch
         {
             AuthStatus.Success => Results.Ok(result.Tokens),
