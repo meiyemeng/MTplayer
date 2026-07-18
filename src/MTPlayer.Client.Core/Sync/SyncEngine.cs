@@ -113,13 +113,16 @@ public sealed class SyncEngine(
         Guid deviceId,
         CancellationToken cancellationToken = default)
     {
-        if (deviceId == Guid.Empty)
-        {
-            throw new ArgumentException("Device ID cannot be empty.", nameof(deviceId));
-        }
+        var upload = await UploadAsync(deviceId, cancellationToken);
+        if (upload.Status != SyncRunStatus.Success) return upload;
+        var download = await DownloadAsync(deviceId, cancellationToken);
+        return new SyncRunResult(download.Status, upload.Pushed, download.Pulled, download.Pending);
+    }
 
+    public async Task<SyncRunResult> UploadAsync(Guid deviceId, CancellationToken cancellationToken = default)
+    {
+        ValidateDeviceId(deviceId);
         var pushed = 0;
-        var pulled = 0;
         var queue = await queueStore.LoadAsync(cancellationToken);
         var now = _timeProvider.GetUtcNow();
         var batch = queue.Items.Where(item => item.NextAttemptAtUtc <= now).Take(200).ToArray();
@@ -192,6 +195,14 @@ public sealed class SyncEngine(
             }
         }
 
+        queue = await queueStore.LoadAsync(cancellationToken);
+        return new SyncRunResult(SyncRunStatus.Success, pushed, 0, queue.Items.Count);
+    }
+
+    public async Task<SyncRunResult> DownloadAsync(Guid deviceId, CancellationToken cancellationToken = default)
+    {
+        ValidateDeviceId(deviceId);
+        var pulled = 0;
         var settings = await settingsStore.LoadAsync(cancellationToken);
         while (true)
         {
@@ -202,12 +213,14 @@ public sealed class SyncEngine(
             }
             catch (Exception exception) when (IsOffline(exception, cancellationToken))
             {
-                return new SyncRunResult(SyncRunStatus.Offline, pushed, pulled, queue.Items.Count);
+                var pending = (await queueStore.LoadAsync(cancellationToken)).Items.Count;
+                return new SyncRunResult(SyncRunStatus.Offline, 0, pulled, pending);
             }
             catch (AccountApiException exception) when (exception.Code == "authentication_required" ||
                 exception.Code == "invalid_refresh_token")
             {
-                return new SyncRunResult(SyncRunStatus.AuthenticationRequired, pushed, pulled, queue.Items.Count);
+                var pending = (await queueStore.LoadAsync(cancellationToken)).Items.Count;
+                return new SyncRunResult(SyncRunStatus.AuthenticationRequired, 0, pulled, pending);
             }
 
             if (page.Cursor < settings.SyncCursor)
@@ -230,8 +243,13 @@ public sealed class SyncEngine(
             }
         }
 
-        queue = await queueStore.LoadAsync(cancellationToken);
-        return new SyncRunResult(SyncRunStatus.Success, pushed, pulled, queue.Items.Count);
+        var queue = await queueStore.LoadAsync(cancellationToken);
+        return new SyncRunResult(SyncRunStatus.Success, 0, pulled, queue.Items.Count);
+    }
+
+    private static void ValidateDeviceId(Guid deviceId)
+    {
+        if (deviceId == Guid.Empty) throw new ArgumentException("Device ID cannot be empty.", nameof(deviceId));
     }
 
     public async Task MergeGuestDataAsync(CancellationToken cancellationToken = default)

@@ -33,6 +33,7 @@ public final class ConfigurationRepository {
     private static final int MAX_CONFIG_BYTES = 10 * 1024 * 1024;
     private static final Type GROUP_LIST = new TypeToken<List<SourceGroup>>(){}.getType();
     private static final Type STRING_LIST = new TypeToken<List<String>>(){}.getType();
+    private static final Type LIVE_LIST = new TypeToken<List<LiveChannel>>(){}.getType();
     private final SharedPreferences prefs;
     private final OkHttpClient http;
     private final Gson gson = new Gson();
@@ -89,6 +90,22 @@ public final class ConfigurationRepository {
 
     public synchronized void clearDeletedIds() { prefs.edit().remove("deleted").apply(); }
 
+    public synchronized void replaceManagedGroups(List<SourceGroup> managed) {
+        List<String> oldIds = gson.fromJson(prefs.getString("managed.groups", "[]"), STRING_LIST);
+        if (oldIds == null) oldIds = new ArrayList<>();
+        List<SourceGroup> values = groups();
+        final List<String> removeIds = oldIds;
+        values.removeIf(group -> removeIds.contains(group.id));
+        values.addAll(managed);
+        save(values);
+        List<String> ids = new ArrayList<>(); for (SourceGroup group : managed) ids.add(group.id);
+        prefs.edit().putString("managed.groups", gson.toJson(ids)).apply();
+    }
+
+    public synchronized void replaceManagedLives(List<LiveChannel> channels) {
+        prefs.edit().putString("managed.lives", gson.toJson(channels)).apply();
+    }
+
     public synchronized void applySynced(String id, String name, String url, boolean enabled, boolean deleted) {
         List<SourceGroup> groups = groups();
         for (Iterator<SourceGroup> iterator = groups.iterator(); iterator.hasNext();) if (iterator.next().id.equals(id)) iterator.remove();
@@ -117,6 +134,8 @@ public final class ConfigurationRepository {
 
     public List<LiveChannel> enabledLiveChannels() throws IOException {
         Map<String, LiveChannel> merged = new LinkedHashMap<>();
+        List<LiveChannel> managed = gson.fromJson(prefs.getString("managed.lives", "[]"), LIVE_LIST);
+        if (managed != null) for (LiveChannel channel : managed) if (channel.url != null) merged.put(channel.url, channel);
         IOException lastFailure = null;
         for (SourceGroup group : groups()) {
             if (!group.enabled) continue;
@@ -154,6 +173,21 @@ public final class ConfigurationRepository {
                     JsonObject live = item.getAsJsonObject();
                     name = first(text(live, "name"), fallbackGroup, "直播");
                     address = first(text(live, "url"), text(live, "api"), text(live, "address"));
+                    JsonArray nestedChannels = array(live, "channels");
+                    if (nestedChannels != null) {
+                        for (JsonElement nestedElement : nestedChannels) {
+                            if (!nestedElement.isJsonObject()) continue;
+                            JsonObject nested = nestedElement.getAsJsonObject();
+                            String nestedName = first(text(nested, "name"), name, "直播");
+                            JsonArray nestedUrls = array(nested, "urls");
+                            if (nestedUrls == null) continue;
+                            for (JsonElement nestedUrl : nestedUrls) {
+                                String value = nestedUrl.isJsonPrimitive() ? nestedUrl.getAsString()
+                                        : nestedUrl.isJsonObject() ? first(text(nestedUrl.getAsJsonObject(), "url"), text(nestedUrl.getAsJsonObject(), "api")) : null;
+                                addLiveAddress(result, nestedName, resolve(configUrl, value), depth);
+                            }
+                        }
+                    }
                 }
                 addLiveAddress(result, name, resolve(configUrl, address), depth);
             }
@@ -272,8 +306,7 @@ public final class ConfigurationRepository {
                 String api = text(siteObject, "api");
                 if (api == null || !(api.startsWith("https://") || api.startsWith("http://"))) continue;
                 int type = number(siteObject, "type", 0);
-                boolean cms = type == 1 || api.contains("/provide/vod") || api.contains("/api.php/provide/");
-                if (!cms) continue;
+                if (type != 1 && type != 2 && type != 4) continue;
                 String name = first(text(siteObject, "name"), text(siteObject, "key"), "接口 " + (++index));
                 String key = first(text(siteObject, "key"), "site" + index);
                 result.add(new Site(groupId + ":" + key, name, api));

@@ -16,7 +16,7 @@ android {
         manifestPlaceholders = [tvAppLabel: tvAppLabel]
         minSdk 21
         targetSdk 35
-        versionCode 130
+        versionCode 1301
         versionName '1.3.0'
     }
     signingConfigs {
@@ -28,13 +28,23 @@ android {
                 keyPassword keystoreProperties['keyPassword']
             }
         }
+        legacyTv {
+            if (keystorePropertiesFile.exists() && keystoreProperties['tvStoreFile']) {
+                storeFile rootProject.file(keystoreProperties['tvStoreFile'])
+                storePassword keystoreProperties['tvStorePassword']
+                keyAlias keystoreProperties['tvKeyAlias']
+                keyPassword keystoreProperties['tvKeyPassword']
+            }
+        }
     }
     buildTypes {
         release {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.release
+            // Early TV builds were distributed with this certificate. Keeping it is required
+            // for an in-place update without deleting the user's local favourites and history.
+            signingConfig keystoreProperties['tvStoreFile'] ? signingConfigs.legacyTv : signingConfigs.release
         }
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }

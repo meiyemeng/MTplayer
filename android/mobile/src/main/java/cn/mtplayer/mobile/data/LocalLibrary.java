@@ -8,8 +8,9 @@ import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.List;
 import cn.mtplayer.core.model.MediaItem;
+import cn.mtplayer.core.sync.SyncLibrary;
 
-public final class LocalLibrary {
+public final class LocalLibrary implements SyncLibrary {
     private static final Type LIST = new TypeToken<List<MediaItem>>(){}.getType();
     private static final Type STRING_LIST = new TypeToken<List<String>>(){}.getType();
     private final SharedPreferences prefs; private final Gson gson = new Gson();

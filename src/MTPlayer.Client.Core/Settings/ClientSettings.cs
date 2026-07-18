@@ -19,6 +19,8 @@ public sealed class ClientSettings
     public Guid DeviceId { get; set; }
     public long SyncCursor { get; set; }
     public Dictionary<string, PreferenceSyncState> PreferenceStates { get; set; } = new(StringComparer.Ordinal);
+    public List<Guid> ManagedPushConfigurationIds { get; set; } = [];
+    public List<Guid> ManagedPushLiveIds { get; set; } = [];
 }
 
 public sealed record PreferenceSyncState(long Version, DateTimeOffset ModifiedAtUtc, bool IsDeleted = false);

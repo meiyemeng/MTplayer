@@ -49,7 +49,7 @@ public sealed class WebClientSecurityTests
     }
 
     [Fact]
-    public async Task Configuration_inspection_exposes_only_native_http_catalogue_sites()
+    public async Task Configuration_inspection_reports_all_discovered_sites_and_exposes_http_catalogues()
     {
         const string config = """
             {
@@ -68,9 +68,12 @@ public sealed class WebClientSecurityTests
             new WebConfigRequest(Guid.NewGuid(), "http://93.184.216.34/config.json"),
             CancellationToken.None);
 
-        var site = Assert.Single(result.Sites);
-        Assert.Equal("可用 CMS", site.Name);
-        Assert.Equal("https://api.example.com/provide/vod/", site.Api);
+        Assert.Equal(2, result.Sites.Count);
+        Assert.Contains(result.Sites, site => site.Api == "https://api.example.com/provide/vod/");
+        Assert.Contains(result.Sites, site => site.Api == "https://api.example.com/disabled");
+        Assert.Equal(3, result.DetectedSiteCount);
+        Assert.Equal(1, result.RuntimeRequiredSiteCount);
+        Assert.Contains(result.Warnings, warning => warning.Contains("JAR/CSP", StringComparison.Ordinal));
         Assert.Single(result.Lives);
     }
 

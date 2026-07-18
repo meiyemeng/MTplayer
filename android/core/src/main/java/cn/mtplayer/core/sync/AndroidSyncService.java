@@ -1,4 +1,4 @@
-package cn.mtplayer.mobile.data;
+package cn.mtplayer.core.sync;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -13,11 +13,14 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 
 import cn.mtplayer.core.account.AccountClient;
 import cn.mtplayer.core.config.ConfigurationRepository;
 import cn.mtplayer.core.config.SourceGroup;
 import cn.mtplayer.core.model.MediaItem;
+import cn.mtplayer.core.model.LiveChannel;
 
 public final class AndroidSyncService {
     public static final class Result {
@@ -28,10 +31,10 @@ public final class AndroidSyncService {
 
     private final AccountClient account;
     private final ConfigurationRepository configurations;
-    private final LocalLibrary library;
+    private final SyncLibrary library;
     private final SharedPreferences prefs;
 
-    public AndroidSyncService(Context context, AccountClient account, ConfigurationRepository configurations, LocalLibrary library) {
+    public AndroidSyncService(Context context, AccountClient account, ConfigurationRepository configurations, SyncLibrary library) {
         this.account = account;
         this.configurations = configurations;
         this.library = library;
@@ -39,6 +42,12 @@ public final class AndroidSyncService {
     }
 
     public Result synchronize() throws Exception {
+        Result uploaded = upload();
+        Result downloaded = download();
+        return new Result(uploaded.pushed, downloaded.pulled);
+    }
+
+    public Result upload() throws Exception {
         if (!account.signedIn()) throw new IllegalStateException("请先登录后再同步");
         JsonArray mutations = new JsonArray();
         for (MediaItem item : library.favorites()) {
@@ -74,34 +83,71 @@ public final class AndroidSyncService {
         request.add("mutations", mutations);
         JsonElement pushedRaw = account.authorizedPost("/api/v1/sync/push", request);
         int pushed = 0;
+        boolean allAccepted = true;
         if (pushedRaw.isJsonArray()) {
             for (JsonElement value : pushedRaw.getAsJsonArray()) {
                 if (!value.isJsonObject()) continue;
                 JsonObject result = value.getAsJsonObject();
                 String id = string(result, "id");
                 if (!id.isEmpty() && result.has("version")) prefs.edit().putLong("version." + id, result.get("version").getAsLong()).apply();
-                if (bool(result, "accepted")) pushed++;
+                if (bool(result, "accepted")) pushed++; else allAccepted = false;
                 JsonElement current = result.get("current");
                 if (current != null && current.isJsonObject()) apply(current.getAsJsonObject());
             }
-            library.clearFavoriteTombstones();
-            configurations.clearDeletedIds();
+            if (allAccepted) {
+                library.clearFavoriteTombstones();
+                configurations.clearDeletedIds();
+            }
         }
+        return new Result(pushed, 0);
+    }
 
-        long cursor = prefs.getLong("cursor", 0);
-        JsonElement pulledRaw = account.authorizedGet("/api/v1/sync/pull?cursor=" + cursor + "&limit=500");
+    public Result download() throws Exception {
+        if (!account.signedIn()) throw new IllegalStateException("请先登录后再同步");
+        long cursor = 0;
         int pulled = 0;
-        if (pulledRaw.isJsonObject()) {
+        for (int page = 0; page < 20; page++) {
+            JsonElement pulledRaw = account.authorizedGet("/api/v1/sync/pull?cursor=" + cursor + "&limit=500");
+            if (!pulledRaw.isJsonObject()) break;
             JsonObject response = pulledRaw.getAsJsonObject();
             JsonElement changes = response.get("changes");
+            int count = 0;
             if (changes != null && changes.isJsonArray()) {
                 for (JsonElement value : changes.getAsJsonArray()) {
-                    if (value.isJsonObject()) { apply(value.getAsJsonObject()); pulled++; }
+                    if (value.isJsonObject()) { apply(value.getAsJsonObject()); pulled++; count++; }
                 }
             }
-            if (response.has("cursor")) prefs.edit().putLong("cursor", response.get("cursor").getAsLong()).apply();
+            long next = response.has("cursor") ? response.get("cursor").getAsLong() : cursor;
+            cursor = next;
+            prefs.edit().putLong("cursor", cursor).apply();
+            if (count < 500) break;
         }
-        return new Result(pushed, pulled);
+        applyMemberPushes();
+        return new Result(0, pulled);
+    }
+
+    private void applyMemberPushes() throws Exception {
+        JsonElement raw = account.authorizedGet("/api/v1/member/pushes");
+        List<SourceGroup> groups = new ArrayList<>();
+        List<LiveChannel> lives = new ArrayList<>();
+        if (raw != null && raw.isJsonArray()) for (JsonElement item : raw.getAsJsonArray()) {
+            if (!item.isJsonObject()) continue;
+            JsonObject push = item.getAsJsonObject(); String pushId = string(push, "id");
+            JsonElement configurations = push.get("configurationSources");
+            if (configurations != null && configurations.isJsonArray()) for (JsonElement sourceRaw : configurations.getAsJsonArray()) {
+                if (!sourceRaw.isJsonObject()) continue; JsonObject source = sourceRaw.getAsJsonObject();
+                String address = string(source, "address"); if (blank(address)) continue;
+                groups.add(new SourceGroup(stableId("member-configuration", pushId, address), fallback(string(source, "name"), "会员配置"), address, true));
+            }
+            JsonElement liveSources = push.get("liveSources");
+            if (liveSources != null && liveSources.isJsonArray()) for (JsonElement sourceRaw : liveSources.getAsJsonArray()) {
+                if (!sourceRaw.isJsonObject()) continue; JsonObject source = sourceRaw.getAsJsonObject();
+                String address = string(source, "address"); if (blank(address)) continue;
+                lives.add(new LiveChannel("会员推送", fallback(string(source, "name"), "直播频道"), address, ""));
+            }
+        }
+        configurations.replaceManagedGroups(groups);
+        configurations.replaceManagedLives(lives);
     }
 
     private JsonObject mutation(String id, String kind, JsonObject payload) {

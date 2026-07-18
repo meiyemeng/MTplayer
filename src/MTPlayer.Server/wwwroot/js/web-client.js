@@ -21,6 +21,7 @@
         auth: { email: "", accessToken: "", refreshToken: "", expiresAtUtc: "" },
         cursor: 0,
         groups: [],
+        deletedGroups: [],
         disabledSiteKeys: [],
         favorites: [],
         history: [],
@@ -57,6 +58,7 @@
                 preferences: { ...defaults.preferences, ...(saved.preferences || {}) },
                 preferenceStates: saved.preferenceStates || {},
                 groups: Array.isArray(saved.groups) ? saved.groups : [],
+                deletedGroups: Array.isArray(saved.deletedGroups) ? saved.deletedGroups : [],
                 disabledSiteKeys: Array.isArray(saved.disabledSiteKeys) ? saved.disabledSiteKeys : [],
                 favorites: Array.isArray(saved.favorites) ? saved.favorites : [],
                 history: Array.isArray(saved.history) ? saved.history : [],
@@ -210,6 +212,8 @@
             group.sites = result.sites || [];
             group.lives = result.lives || [];
             group.warnings = result.warnings || [];
+            group.detectedSiteCount = Number(result.detectedSiteCount || group.sites.length);
+            group.runtimeRequiredSiteCount = Number(result.runtimeRequiredSiteCount || 0);
             state.groups.push(group);
             saveState(); renderSettings();
             event.target.reset();
@@ -222,9 +226,15 @@
 
     async function refreshGroup(group, notify = false) {
         const result = await api("/api/v1/web/config/inspect", { method: "POST", body: JSON.stringify({ groupId: group.id, url: group.address }) });
-        group.sites = result.sites || [];
-        group.lives = result.lives || [];
-        group.warnings = result.warnings || [];
+        const nextSites = result.sites || [];
+        const nextLives = result.lives || [];
+        const warnings = result.warnings || [];
+        // A temporary upstream outage must not erase the last known usable catalogue or live list.
+        if (nextSites.length || !(group.sites?.length && warnings.length)) group.sites = nextSites;
+        if (nextLives.length || !(group.lives?.length && warnings.length)) group.lives = nextLives;
+        group.warnings = warnings;
+        group.detectedSiteCount = Number(result.detectedSiteCount || group.sites.length);
+        group.runtimeRequiredSiteCount = Number(result.runtimeRequiredSiteCount || 0);
         group.lastUpdatedUtc = now();
         touch(group);
         saveState();
@@ -271,8 +281,13 @@
         if (!group || !confirm(`确定删除配置源“${group.name}”吗？`)) return;
         const removedSiteKeys = new Set((group.sites || []).map(site => site.key));
         state.disabledSiteKeys = state.disabledSiteKeys.filter(key => !removedSiteKeys.has(key));
-        if (group.version > 0 || state.auth.accessToken) { group.isDeleted = true; group.sites = []; group.lives = []; touch(group); }
-        else state.groups = state.groups.filter(value => value.id !== id);
+        state.groups = state.groups.filter(value => value.id !== id);
+        if (group.version > 0 || state.auth.accessToken) {
+            const tombstone = { ...group, isDeleted: true, sites: [], lives: [] };
+            touch(tombstone);
+            state.deletedGroups = state.deletedGroups.filter(value => value.id !== id);
+            state.deletedGroups.push(tombstone);
+        }
         catalogue = [];
         saveState(); renderSettings(); renderLive(); refreshHome(false); scheduleSync();
     }
@@ -516,7 +531,7 @@
 
     function renderSettings() {
         const groups = state.groups.filter(group => !group.isDeleted);
-        $("#source-list").innerHTML = groups.length ? groups.map(group => `<div class="stack-item"><div><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.address)} · ${group.sites?.length || 0} 个影视接口 · ${group.lives?.length || 0} 个直播频道${group.lastUpdatedUtc ? ` · ${new Date(group.lastUpdatedUtc).toLocaleString()}` : ""}</small>${group.warnings?.length ? `<small class="source-warning">${escapeHtml(group.warnings[0])}</small>` : ""}</div><div class="item-actions"><button data-action="toggle-group" data-id="${group.id}">${group.isEnabled ? "停用" : "启用"}</button><button data-action="refresh-group" data-id="${group.id}">更新</button><button class="danger" data-action="delete-group" data-id="${group.id}">删除</button></div></div>`).join("") : empty("尚未添加配置源。");
+        $("#source-list").innerHTML = groups.length ? groups.map(group => `<div class="stack-item"><div><strong>${escapeHtml(group.name)}</strong><small>${escapeHtml(group.address)} · ${group.sites?.length || 0} 个可直接播放接口${group.detectedSiteCount > (group.sites?.length || 0) ? ` / 共识别 ${group.detectedSiteCount} 个站点` : ""} · ${group.lives?.length || 0} 个直播频道${group.lastUpdatedUtc ? ` · ${new Date(group.lastUpdatedUtc).toLocaleString()}` : ""}</small>${group.warnings?.length ? `<small class="source-warning">${escapeHtml(group.warnings[0])}</small>` : ""}</div><div class="item-actions"><button data-action="toggle-group" data-id="${group.id}">${group.isEnabled ? "停用" : "启用"}</button><button data-action="refresh-group" data-id="${group.id}">更新</button><button class="danger" data-action="delete-group" data-id="${group.id}">删除</button></div></div>`).join("") : empty("尚未添加配置源。");
         const sites = allSites(); const disabled = new Set(state.disabledSiteKeys);
         $("#interface-summary").textContent = `${sites.length - state.disabledSiteKeys.filter(key => sites.some(site => site.key === key)).length} / ${sites.length} 个接口已启用`;
         $("#interface-list").innerHTML = sites.length ? sites.map(site => `<label title="${attr(site.api)}"><input type="checkbox" data-site-key="${attr(site.key)}" ${disabled.has(site.key) ? "" : "checked"} /><span>${escapeHtml(site.name)}</span></label>`).join("") : empty("添加配置源后会在这里显示播放接口。");
@@ -595,6 +610,7 @@
             cursor = next;
         } while (pages < 20);
         state.cursor = cursor; saveState(); renderAllLocalViews(); renderSettings(); updateAccountUi();
+        await applyMemberPushes();
         await refreshRemoteGroups();
         $("#sync-state").textContent = `下载完成 · ${new Date().toLocaleTimeString()}`;
     }
@@ -603,6 +619,31 @@
         if (!stale.length) return;
         await Promise.allSettled(stale.map(group => refreshGroup(group)));
         renderSettings(); await refreshHome(false);
+    }
+    async function applyMemberPushes() {
+        const pushes = await api("/api/v1/member/pushes");
+        const activeGroupIds = new Set(), activeLiveIds = new Set();
+        for (const push of pushes || []) {
+            for (const source of push.configurationSources || []) {
+                const id = await stableId("member-configuration", push.id, source.address);
+                activeGroupIds.add(id);
+                let group = state.groups.find(item => item.id === id);
+                if (!group) {
+                    group = { id, name: source.name, address: source.address, isEnabled: true, sites: [], lives: [], modifiedAtUtc: push.updatedAtUtc, version: 0, isDeleted: false, dirty: false, managedPush: true };
+                    state.groups.push(group);
+                } else Object.assign(group, { name: source.name, address: source.address, isEnabled: true, managedPush: true });
+            }
+            for (const source of push.liveSources || []) {
+                const id = await stableId("member-live", push.id, source.address);
+                activeLiveIds.add(id);
+                const existing = state.customLives.find(item => item.id === id);
+                if (existing) Object.assign(existing, { name: source.name, address: source.address, managedPush: true });
+                else state.customLives.push({ id, name: source.name, address: source.address, group: "会员推送", managedPush: true });
+            }
+        }
+        state.groups = state.groups.filter(item => !item.managedPush || activeGroupIds.has(item.id));
+        state.customLives = state.customLives.filter(item => !item.managedPush || activeLiveIds.has(item.id));
+        saveState(); renderAllLocalViews();
     }
     function scheduleSync(delay = 1600) {
         if (!state.auth.accessToken) return;
@@ -614,7 +655,7 @@
     }
     function requireLogin() { if (state.auth.accessToken) return true; toast("请先登录账户再使用云同步。", true); navigate("account"); return false; }
 
-    function dirtyEntities() { return [...state.groups, ...state.favorites, ...state.history, ...state.skipMarkers, ...Object.values(state.preferenceStates)].filter(item => item.dirty); }
+    function dirtyEntities() { return [...state.groups, ...state.deletedGroups, ...state.favorites, ...state.history, ...state.skipMarkers, ...Object.values(state.preferenceStates)].filter(item => item.dirty); }
     function toMutation(entity) {
         let kind, payload;
         if ("address" in entity) { kind = "ConfigurationGroup"; payload = { name: entity.name, address: entity.address, isEnabled: entity.isEnabled, sites: entity.sites || [], lives: entity.lives || [] }; }
@@ -627,7 +668,19 @@
     function applyRemote(mutation) {
         const payload = mutation.payload || {}, base = { id: mutation.id, version: mutation.baseVersion || mutation.version || 0, modifiedAtUtc: mutation.modifiedAtUtc, isDeleted: mutation.isDeleted, dirty: false };
         let collection, entity;
-        if (mutation.kind === "ConfigurationGroup") { collection = state.groups; entity = { ...base, ...payload, sites: Array.isArray(payload.sites) ? payload.sites : [], lives: Array.isArray(payload.lives) ? payload.lives : [] }; }
+        if (mutation.kind === "ConfigurationGroup") {
+            const localTombstone = state.deletedGroups.find(item => item.id === mutation.id);
+            if (localTombstone?.dirty && Date.parse(localTombstone.modifiedAtUtc) >= Date.parse(mutation.modifiedAtUtc || 0)) return;
+            if (mutation.isDeleted) {
+                state.groups = state.groups.filter(item => item.id !== mutation.id);
+                const tombstone = { ...localTombstone, ...base, ...payload, sites: [], lives: [] };
+                const at = state.deletedGroups.findIndex(item => item.id === mutation.id);
+                if (at >= 0) state.deletedGroups[at] = tombstone; else state.deletedGroups.push(tombstone);
+                return;
+            }
+            state.deletedGroups = state.deletedGroups.filter(item => item.id !== mutation.id);
+            collection = state.groups; entity = { ...base, ...payload, sites: Array.isArray(payload.sites) ? payload.sites : [], lives: Array.isArray(payload.lives) ? payload.lives : [] };
+        }
         else if (mutation.kind === "Favorite") { collection = state.favorites; entity = { ...base, ...payload }; }
         else if (mutation.kind === "PlaybackHistory") { collection = state.history; entity = { ...base, ...payload }; }
         else if (mutation.kind === "SkipMarker") { collection = state.skipMarkers; entity = { ...base, ...payload }; }
@@ -649,7 +702,7 @@
             collection[index] = entity;
         } else collection.push(entity);
     }
-    function findEntity(id) { return [...state.groups, ...state.favorites, ...state.history, ...state.skipMarkers, ...Object.values(state.preferenceStates)].find(item => item.id === id); }
+    function findEntity(id) { return [...state.groups, ...state.deletedGroups, ...state.favorites, ...state.history, ...state.skipMarkers, ...Object.values(state.preferenceStates)].find(item => item.id === id); }
 
     function renderAllLocalViews() { renderFavorites(); renderHistory(); renderLive(); renderSettings(); updateCounters(); }
     function updateCounters() {

@@ -5,12 +5,15 @@ import cn.mtplayer.core.account.AccountClient;
 import cn.mtplayer.core.catalogue.CmsCatalogueClient;
 import cn.mtplayer.core.config.ConfigurationRepository;
 import cn.mtplayer.core.network.PreferIpv4Dns;
+import cn.mtplayer.core.sync.AndroidSyncService;
 import okhttp3.OkHttpClient;
 
 public final class TvServices {
     public static ConfigurationRepository configurations;
     public static CmsCatalogueClient catalogue;
     public static AccountClient account;
+    public static TvLibrary library;
+    public static AndroidSyncService sync;
 
     public static void initialize(Context context) {
         OkHttpClient http = new OkHttpClient.Builder()
@@ -22,6 +25,8 @@ public final class TvServices {
         configurations = new ConfigurationRepository(context, http);
         catalogue = new CmsCatalogueClient(http);
         account = new AccountClient(context, http);
+        library = new TvLibrary(context);
+        sync = new AndroidSyncService(context, account, configurations, library);
     }
 
     private TvServices() { }

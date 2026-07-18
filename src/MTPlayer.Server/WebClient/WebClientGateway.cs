@@ -24,7 +24,9 @@ public sealed record WebLiveInspectRequest(string Name, string Url);
 public sealed record WebConfigResponse(
     IReadOnlyList<WebSiteDto> Sites,
     IReadOnlyList<WebLiveDto> Lives,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<string> Warnings,
+    int DetectedSiteCount = 0,
+    int RuntimeRequiredSiteCount = 0);
 public sealed record WebCatalogueRequest(IReadOnlyList<WebSiteDto> Sites, string? Keyword = null, int Limit = 60);
 public sealed record WebDetailRequest(WebSiteDto Site, string Id);
 public sealed record WebSignRequest(string Url);
@@ -91,6 +93,7 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
         var sites = new Dictionary<string, WebSiteDto>(StringComparer.Ordinal);
         var lives = new Dictionary<string, WebLiveDto>(StringComparer.OrdinalIgnoreCase);
         var warnings = new List<string>();
+        var counters = new InspectionCounters();
         await InspectCoreAsync(
             request.GroupId.ToString("N"),
             RequireAddress(request.Url),
@@ -98,8 +101,11 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
             sites,
             lives,
             warnings,
+            counters,
             cancellationToken);
-        return new WebConfigResponse(sites.Values.ToArray(), lives.Values.ToArray(), warnings);
+        if (counters.RuntimeRequired > 0)
+            warnings.Insert(0, $"共识别 {counters.Detected} 个站点；其中 {sites.Count} 个 HTTP 站点可在网页端直接运行，{counters.RuntimeRequired} 个 JAR/CSP 站点需要 Android TVBox Spider 运行时。");
+        return new WebConfigResponse(sites.Values.ToArray(), lives.Values.ToArray(), warnings, counters.Detected, counters.RuntimeRequired);
     }
 
     public async Task<WebConfigResponse> InspectLiveAsync(
@@ -208,6 +214,7 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
         Dictionary<string, WebSiteDto> sites,
         Dictionary<string, WebLiveDto> lives,
         List<string> warnings,
+        InspectionCounters counters,
         CancellationToken cancellationToken)
     {
         if (depth > 3) return;
@@ -226,23 +233,25 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
         foreach (var site in parsed.Profile.Sites)
         {
             index++;
-            // Browser/server catalogue support is intentionally limited to HTTP CMS
-            // sites. CSP/JAR/Python entries require their own trusted runtime and must
-            // not be presented as working interfaces in the web client.
-            if (site.Type is not (1 or 2 or 4) || site.Searchable == 0) continue;
-            if (!Uri.TryCreate(site.Api, UriKind.Absolute, out var api) || !IsHttp(api)) continue;
+            counters.Detected++;
+            if (site.Type is not (1 or 2 or 4) ||
+                !Uri.TryCreate(site.Api, UriKind.Absolute, out var api) || !IsHttp(api))
+            {
+                counters.RuntimeRequired++;
+                continue;
+            }
             var key = $"{groupKey}:{(string.IsNullOrWhiteSpace(site.RuntimeKey) ? index : site.RuntimeKey)}";
             sites[key] = new WebSiteDto(key, string.IsNullOrWhiteSpace(site.Name) ? $"接口 {index}" : site.Name, api.ToString());
         }
 
         foreach (var live in parsed.Profile.Lives)
-            await AddLiveSourceAsync(live, lives, warnings, cancellationToken);
+            await AddLiveSourceAsync(live, address, lives, warnings, cancellationToken);
 
         var child = 0;
         foreach (var depot in parsed.Profile.Urls)
         {
             if (!Uri.TryCreate(address, depot.Url, out var childAddress) || !IsHttp(childAddress)) continue;
-            await InspectCoreAsync($"{groupKey}:g{++child}", childAddress, depth + 1, sites, lives, warnings, cancellationToken);
+            await InspectCoreAsync($"{groupKey}:g{++child}", childAddress, depth + 1, sites, lives, warnings, counters, cancellationToken);
         }
     }
 
@@ -407,12 +416,18 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
 
     private async Task AddLiveSourceAsync(
         TvBoxLive live,
+        Uri configurationAddress,
         Dictionary<string, WebLiveDto> lives,
         List<string> warnings,
         CancellationToken cancellationToken)
     {
         await AddNestedLiveSourcesAsync(live, lives, warnings, cancellationToken);
         var liveAddress = FirstAddress(live.Url, live.Api, live.Ext);
+        if (liveAddress is null)
+        {
+            var relative = live.Url ?? live.Api ?? (live.Ext is { ValueKind: JsonValueKind.String } e ? e.GetString() : null);
+            if (Uri.TryCreate(configurationAddress, relative, out var resolved) && IsHttp(resolved)) liveAddress = resolved.ToString();
+        }
         if (liveAddress is null) return;
         var sourceName = string.IsNullOrWhiteSpace(live.Name) ? $"直播源 {lives.Count + 1}" : live.Name.Trim();
         var epgTemplate = ExtensionString(live, "epg");
@@ -555,6 +570,12 @@ public sealed class WebClientGateway(HttpClient http, WebProxySigner signer)
         TaskCanceledException => "连接超时",
         _ => exception.Message,
     };
+
+    private sealed class InspectionCounters
+    {
+        public int Detected { get; set; }
+        public int RuntimeRequired { get; set; }
+    }
 
     private static void AddLive(Dictionary<string, WebLiveDto> lives, WebLiveDto channel) =>
         lives[$"{channel.Name}|{channel.Address}"] = channel;

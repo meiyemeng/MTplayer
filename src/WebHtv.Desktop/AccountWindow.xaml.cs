@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Json;
 using System.Windows;
 using MTPlayer.Client.Core.Account;
 using MTPlayer.Client.Core.Library;
@@ -86,6 +87,7 @@ public partial class AccountWindow : Window, IDisposable
             var sync = CreateSyncEngine();
             await sync.MergeGuestDataAsync();
             var result = await sync.SynchronizeAsync(_settings.DeviceId);
+            await ApplyMemberPushesAsync();
             PasswordText.Clear();
             SetStatus(DescribeSync(result, "登录成功。"), result.Status != SyncRunStatus.Success);
             RefreshState();
@@ -97,8 +99,28 @@ public partial class AccountWindow : Window, IDisposable
         await RunAsync(async () =>
         {
             var result = await CreateSyncEngine().SynchronizeAsync(_settings.DeviceId);
+            await ApplyMemberPushesAsync();
             SetStatus(DescribeSync(result, "同步完成。"), result.Status != SyncRunStatus.Success);
             RefreshState();
+        });
+    }
+
+    private async void Upload_Click(object sender, RoutedEventArgs e)
+    {
+        await RunAsync(async () =>
+        {
+            var result = await CreateSyncEngine().UploadAsync(_settings.DeviceId);
+            SetStatus(DescribeSync(result, "本地数据上传完成。"), result.Status != SyncRunStatus.Success);
+        });
+    }
+
+    private async void Download_Click(object sender, RoutedEventArgs e)
+    {
+        await RunAsync(async () =>
+        {
+            var result = await CreateSyncEngine().DownloadAsync(_settings.DeviceId);
+            await ApplyMemberPushesAsync();
+            SetStatus(DescribeSync(result, "云端数据下载完成。"), result.Status != SyncRunStatus.Success);
         });
     }
 
@@ -117,6 +139,37 @@ public partial class AccountWindow : Window, IDisposable
         _queueStore,
         _libraryStore,
         _settingsStore);
+
+    private async Task ApplyMemberPushesAsync()
+    {
+        using var response = await _account.SendAuthorizedAsync(() => new HttpRequestMessage(HttpMethod.Get, "api/v1/member/pushes"));
+        response.EnsureSuccessStatusCode();
+        var pushes = await response.Content.ReadFromJsonAsync<List<MemberPushResponse>>() ?? [];
+        _settings = await _settingsStore.LoadAsync();
+        _settings.ConfigurationGroups.RemoveAll(item => _settings.ManagedPushConfigurationIds.Contains(item.Id));
+        _settings.CustomLiveSources.RemoveAll(item => _settings.ManagedPushLiveIds.Contains(item.Id));
+        _settings.ManagedPushConfigurationIds.Clear();
+        _settings.ManagedPushLiveIds.Clear();
+        foreach (var push in pushes)
+        {
+            foreach (var source in push.ConfigurationSources ?? [])
+            {
+                var id = JsonLibraryStore.StableId("member-configuration", push.Id.ToString("D"), source.Address);
+                _settings.ManagedPushConfigurationIds.Add(id);
+                _settings.ConfigurationGroups.Add(new ConfigurationGroupRecord(id, source.Name, source.Address, true, push.UpdatedAtUtc));
+            }
+            foreach (var source in push.LiveSources ?? [])
+            {
+                var id = JsonLibraryStore.StableId("member-live", push.Id.ToString("D"), source.Address);
+                _settings.ManagedPushLiveIds.Add(id);
+                _settings.CustomLiveSources.Add(new CustomLiveSourceRecord(id, source.Name, source.Address, null, push.UpdatedAtUtc));
+            }
+        }
+        await _settingsStore.SaveAsync(_settings);
+    }
+
+    private sealed record MemberSourceResponse(string Name, string Address);
+    private sealed record MemberPushResponse(Guid Id, List<MemberSourceResponse>? ConfigurationSources, List<MemberSourceResponse>? LiveSources, DateTimeOffset UpdatedAtUtc);
 
     private async Task<bool> EnsureBindingAsync()
     {
@@ -204,6 +257,8 @@ public partial class AccountWindow : Window, IDisposable
         LoginButton.IsEnabled = enabled;
         RegisterButton.IsEnabled = enabled;
         SyncButton.IsEnabled = enabled && _account.IsAuthenticated;
+        UploadButton.IsEnabled = enabled && _account.IsAuthenticated;
+        DownloadButton.IsEnabled = enabled && _account.IsAuthenticated;
         LogoutButton.IsEnabled = enabled && _account.IsAuthenticated;
     }
 

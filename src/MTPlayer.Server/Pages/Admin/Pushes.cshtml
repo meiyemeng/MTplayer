@@ -1,0 +1,29 @@
+@page "/admin/pushes"
+@model MTPlayer.Server.Pages.Admin.PushesModel
+@{
+    Layout = "/Pages/Shared/_AdminLayout.cshtml";
+    ViewData["Title"] = "会员推送";
+    ViewData["Description"] = "向指定会员等级统一下发配置源和直播源";
+}
+@if (!string.IsNullOrWhiteSpace(Model.StatusMessage)) { <div class="notice" role="status">@Model.StatusMessage</div> }
+<section class="panel span-12">
+    <div class="panel-heading"><div><p class="eyebrow">NEW PUSH</p><h2>新建推送</h2><p>每行填写“名称|HTTP/HTTPS 地址”。客户端只保存地址，不经服务器转发播放流。</p></div></div>
+    <form method="post" asp-page-handler="Save" class="settings-form">
+        <div class="field-grid"><label>推送标题<input name="title" required maxlength="200" /></label><label>最低会员等级<select name="minimumMembershipLevel"><option value="free">全部用户</option><option value="member">会员</option><option value="vip">VIP</option></select></label></div>
+        <div class="field-grid"><label>配置源<textarea name="configurationSources" rows="7" placeholder="影视仓|https://example.com/config.json"></textarea></label><label>直播源<textarea name="liveSources" rows="7" placeholder="电视直播|https://example.com/live.m3u"></textarea></label></div>
+        <label class="check-row"><input type="checkbox" name="enabled" value="true" checked />立即启用</label>
+        <button class="button primary" type="submit">保存并下发</button>
+    </form>
+</section>
+@foreach (var push in Model.Pushes)
+{
+<section class="panel span-12">
+    <form method="post" asp-page-handler="Save" class="settings-form">
+        <input type="hidden" name="id" value="@push.Id" />
+        <div class="field-grid"><label>推送标题<input name="title" value="@push.Title" required /></label><label>最低会员等级<select name="minimumMembershipLevel"><option value="free" selected="@(push.MinimumMembershipLevel == "free" ? "selected" : null)">全部用户</option><option value="member" selected="@(push.MinimumMembershipLevel == "member" ? "selected" : null)">会员</option><option value="vip" selected="@(push.MinimumMembershipLevel == "vip" ? "selected" : null)">VIP</option></select></label></div>
+        <div class="field-grid"><label>配置源<textarea name="configurationSources" rows="5">@PushesModel.FormatSources(push.ConfigurationSources)</textarea></label><label>直播源<textarea name="liveSources" rows="5">@PushesModel.FormatSources(push.LiveSources)</textarea></label></div>
+        <label class="check-row"><input type="checkbox" name="enabled" value="true" checked="@push.Enabled" />启用</label>
+        <div class="row-actions"><button class="button primary" type="submit">保存修改</button><button class="button danger" type="submit" asp-page-handler="Delete" name="id" value="@push.Id" data-confirm="确定删除此推送吗？">删除</button></div>
+    </form>
+</section>
+}

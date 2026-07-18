@@ -40,7 +40,7 @@ public static class WebClientEndpoints
         try { return Results.Ok(await action()); }
         catch (Exception exception) when (exception is ArgumentException or InvalidDataException or JsonException)
         { return Results.BadRequest(new { message = exception.Message }); }
-        catch (HttpRequestException exception)
+        catch (Exception exception) when (exception is HttpRequestException or IOException or TaskCanceledException)
         { return Results.Problem(statusCode: StatusCodes.Status502BadGateway, title: "远程资源读取失败。", detail: exception.Message); }
     }
 }

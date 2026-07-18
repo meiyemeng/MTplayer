@@ -33,7 +33,7 @@ import cn.mtplayer.core.model.MediaItem;
 import cn.mtplayer.core.model.LiveChannel;
 import cn.mtplayer.core.model.Site;
 import cn.mtplayer.mobile.data.AppServices;
-import cn.mtplayer.mobile.data.AndroidSyncService;
+import cn.mtplayer.core.sync.AndroidSyncService;
 import cn.mtplayer.mobile.data.LocalLibrary;
 import cn.mtplayer.mobile.ui.Ui;
 
@@ -49,13 +49,13 @@ public final class MainActivity extends AppCompatActivity {
     @Override protected void onDestroy(){executor.shutdownNow();super.onDestroy();}
 
     private View shell(){
-        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(Ui.BG);
-        content=new FrameLayout(this);root.addView(content,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,0,1));
-        HorizontalScrollView scroll=new HorizontalScrollView(this);scroll.setHorizontalScrollBarEnabled(false);scroll.setBackgroundColor(Ui.SURFACE);
-        LinearLayout nav=new LinearLayout(this);nav.setGravity(Gravity.CENTER);String[] names={"首页","搜索","收藏","直播","登录/同步","设置","关于"};
-        Runnable[] actions={this::showHome,this::showSearch,()->showLibrary(true),this::showLive,this::showAccount,this::showSettings,this::showAbout};
-        for(int i=0;i<names.length;i++){Button b=Ui.button(this,names[i],false);int index=i;b.setOnClickListener(v->actions[index].run());nav.addView(b,new LinearLayout.LayoutParams(Ui.dp(this,i==4?112:82),Ui.dp(this,58)));}
-        scroll.addView(nav);root.addView(scroll,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,58)));return root;
+        boolean wide=getResources().getConfiguration().orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE||getResources().getConfiguration().smallestScreenWidthDp>=600;
+        LinearLayout root=new LinearLayout(this);root.setOrientation(wide?LinearLayout.HORIZONTAL:LinearLayout.VERTICAL);root.setBackgroundColor(Ui.BG);
+        String[] names={"首页","搜索","我的收藏","观看记录","直播频道","账户与同步","设置","关于软件"};
+        Runnable[] actions={this::showHome,this::showSearch,()->showLibrary(true),()->showLibrary(false),this::showLive,this::showAccount,this::showSettings,this::showAbout};
+        if(wide){LinearLayout rail=Ui.column(this);rail.setBackgroundColor(Ui.SURFACE);rail.setPadding(Ui.dp(this,18),Ui.dp(this,20),Ui.dp(this,18),Ui.dp(this,16));ImageView logo=new ImageView(this);logo.setScaleType(ImageView.ScaleType.CENTER_INSIDE);Glide.with(this).load(R.drawable.logo_header).into(logo);rail.addView(logo,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,92)));for(int i=0;i<names.length;i++){Button b=Ui.button(this,names[i],false);int index=i;b.setOnClickListener(v->actions[index].run());rail.addView(b,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,54)));}root.addView(rail,new LinearLayout.LayoutParams(Ui.dp(this,250),ViewGroup.LayoutParams.MATCH_PARENT));content=new FrameLayout(this);root.addView(content,new LinearLayout.LayoutParams(0,ViewGroup.LayoutParams.MATCH_PARENT,1));}
+        else{content=new FrameLayout(this);root.addView(content,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,0,1));HorizontalScrollView scroll=new HorizontalScrollView(this);scroll.setHorizontalScrollBarEnabled(false);scroll.setBackgroundColor(Ui.SURFACE);LinearLayout nav=new LinearLayout(this);nav.setGravity(Gravity.CENTER);for(int i=0;i<names.length;i++){Button b=Ui.button(this,names[i],false);int index=i;b.setOnClickListener(v->actions[index].run());nav.addView(b,new LinearLayout.LayoutParams(Ui.dp(this,106),Ui.dp(this,58)));}scroll.addView(nav);root.addView(scroll,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,58)));}
+        return root;
     }
 
     private void setPage(View view){content.removeAllViews();content.addView(view,new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,ViewGroup.LayoutParams.MATCH_PARENT));}
@@ -98,17 +98,17 @@ public final class MainActivity extends AppCompatActivity {
         EditText password=Ui.input(this,"密码（至少 10 位）");password.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
         root.addView(server,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,56)));root.addView(email,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,56)));root.addView(password,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,56)));
         TextView status=Ui.text(this,AppServices.account.signedIn()?"已登录，可同步收藏、观看记录和配置源。":"游客模式：本地播放可用，但不会同步。");root.addView(status,Ui.matchWrap());
-        LinearLayout buttons=new LinearLayout(this);Button login=Ui.button(this,"登录并同步",true),register=Ui.button(this,"注册新账户",false),syncNow=Ui.button(this,"立即同步",true),logout=Ui.button(this,"退出登录",false);
-        buttons.addView(login,new LinearLayout.LayoutParams(0,Ui.dp(this,54),1));buttons.addView(register,new LinearLayout.LayoutParams(0,Ui.dp(this,54),1));root.addView(buttons,Ui.matchWrap());root.addView(syncNow,Ui.matchWrap());root.addView(logout,Ui.matchWrap());scroll.addView(root);setPage(scroll);
-        login.setOnClickListener(v->accountAction(server,email,password,status,false));register.setOnClickListener(v->accountAction(server,email,password,status,true));syncNow.setOnClickListener(v->runSync(status));logout.setOnClickListener(v->{AppServices.account.logout();status.setText("已退出登录。本地收藏、记录和配置没有删除。");});
+        LinearLayout buttons=new LinearLayout(this);Button login=Ui.button(this,"登录",true),register=Ui.button(this,"注册新账户",false),syncNow=Ui.button(this,"双向同步",true),upload=Ui.button(this,"上传本地数据",false),download=Ui.button(this,"下载云端数据",false),logout=Ui.button(this,"退出登录",false);
+        buttons.addView(login,new LinearLayout.LayoutParams(0,Ui.dp(this,54),1));buttons.addView(register,new LinearLayout.LayoutParams(0,Ui.dp(this,54),1));root.addView(buttons,Ui.matchWrap());LinearLayout directions=new LinearLayout(this);directions.addView(upload,new LinearLayout.LayoutParams(0,Ui.dp(this,54),1));directions.addView(download,new LinearLayout.LayoutParams(0,Ui.dp(this,54),1));root.addView(syncNow,Ui.matchWrap());root.addView(directions,Ui.matchWrap());root.addView(logout,Ui.matchWrap());scroll.addView(root);setPage(scroll);
+        login.setOnClickListener(v->accountAction(server,email,password,status,false));register.setOnClickListener(v->accountAction(server,email,password,status,true));syncNow.setOnClickListener(v->runSync(status,0));upload.setOnClickListener(v->runSync(status,1));download.setOnClickListener(v->runSync(status,2));logout.setOnClickListener(v->{AppServices.account.logout();status.setText("已退出登录。本地收藏、记录和配置没有删除。");});
     }
 
     private void accountAction(EditText server,EditText email,EditText password,TextView status,boolean register){
-        try{AppServices.account.bind(server.getText().toString());}catch(Exception ex){status.setText(message(ex));return;}status.setText(register?"正在注册…":"正在登录…");executor.execute(()->{try{if(register){AppServices.account.register(email.getText().toString().trim(),password.getText().toString());runOnUiThread(()->status.setText("注册请求已提交，请按服务器设置完成邮箱验证后登录。"));}else{AppServices.account.login(email.getText().toString().trim(),password.getText().toString(),"android-mobile");runOnUiThread(()->status.setText("登录成功，正在同步…"));runSyncInBackground(status);}}catch(Exception ex){runOnUiThread(()->status.setText((register?"注册失败：":"登录失败：")+message(ex)));}});
+        try{AppServices.account.bind(server.getText().toString());}catch(Exception ex){status.setText(message(ex));return;}status.setText(register?"正在注册…":"正在登录…");executor.execute(()->{try{if(register){AppServices.account.register(email.getText().toString().trim(),password.getText().toString());runOnUiThread(()->status.setText("注册请求已提交，请按服务器设置完成邮箱验证后登录。"));}else{AppServices.account.login(email.getText().toString().trim(),password.getText().toString(),"android-mobile");runOnUiThread(()->status.setText("登录成功，可选择上传、下载或双向同步。"));}}catch(Exception ex){runOnUiThread(()->status.setText((register?"注册失败：":"登录失败：")+message(ex)));}});
     }
 
-    private void runSync(TextView status){if(!AppServices.account.signedIn()){status.setText("请先登录再同步。");return;}status.setText("正在同步收藏、观看记录和配置源…");executor.execute(()->runSyncInBackground(status));}
-    private void runSyncInBackground(TextView status){try{AndroidSyncService.Result result=sync.synchronize();runOnUiThread(()->status.setText("同步完成：上传 "+result.pushed+" 项，接收 "+result.pulled+" 项。"));}catch(Exception ex){runOnUiThread(()->status.setText("同步失败："+message(ex)));}}
+    private void runSync(TextView status,int mode){if(!AppServices.account.signedIn()){status.setText("请先登录再同步。");return;}status.setText(mode==1?"正在上传本地数据…":mode==2?"正在下载云端数据…":"正在双向同步…");executor.execute(()->runSyncInBackground(status,mode));}
+    private void runSyncInBackground(TextView status,int mode){try{AndroidSyncService.Result result=mode==1?sync.upload():mode==2?sync.download():sync.synchronize();runOnUiThread(()->status.setText("同步完成：上传 "+result.pushed+" 项，下载 "+result.pulled+" 项。"));}catch(Exception ex){runOnUiThread(()->status.setText("同步失败："+message(ex)));}}
 
     private void showSettings(){
         ScrollView scroll=new ScrollView(this);LinearLayout root=page("数据来源","配置源管理");root.addView(Ui.text(this,"支持 HTTP/HTTPS，可添加多个 TVBox 单仓或接口组；启用的配置会共同参与搜索。"),Ui.matchWrap());Button add=Ui.button(this,"＋ 添加配置源",true);root.addView(add,Ui.matchWrap());for(SourceGroup group:AppServices.configurations.groups()){LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);Button toggle=Ui.button(this,(group.enabled?"✓ ":"○ ")+group.name,false);Button remove=Ui.button(this,"删除",false);toggle.setOnClickListener(v->{AppServices.configurations.setEnabled(group.id,!group.enabled);showSettings();});remove.setOnClickListener(v->{AppServices.configurations.remove(group.id);showSettings();});row.addView(toggle,new LinearLayout.LayoutParams(0,Ui.dp(this,56),1));row.addView(remove,new LinearLayout.LayoutParams(Ui.dp(this,82),Ui.dp(this,56)));root.addView(row,Ui.matchWrap());root.addView(Ui.text(this,group.url),Ui.matchWrap());}TextView about=Ui.text(this,"MT播放器 1.3.0\n软件不预置任何内容源，仅播放用户自行配置且有权访问的内容。用户应遵守所在地法律及内容授权规则。\n\n源码与下载：https://github.com/meiyemeng/MTplayer/releases/latest");about.setPadding(0,Ui.dp(this,28),0,Ui.dp(this,20));root.addView(about,Ui.matchWrap());add.setOnClickListener(v->sourceDialog());scroll.addView(root);setPage(scroll);

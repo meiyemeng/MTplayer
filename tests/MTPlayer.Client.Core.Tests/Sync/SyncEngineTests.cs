@@ -224,6 +224,46 @@ public sealed class SyncEngineTests : IDisposable
     }
 
     [Fact]
+    public async Task Upload_only_pushes_local_changes_without_downloading_remote_changes()
+    {
+        using var queue = new SyncQueueStore(Path.Combine(_directory, "upload-only.json"));
+        await queue.EnqueueAsync(FavoriteMutation(Guid.NewGuid()));
+        var api = new FakeSyncApi();
+        api.Pages.Enqueue(new SyncPullResponse(1, [FavoriteMutation(Guid.NewGuid())]));
+        var engine = new SyncEngine(api, queue, new MemoryLibraryStore(), new MemorySettingsStore());
+
+        var result = await engine.UploadAsync(Guid.NewGuid());
+
+        Assert.Equal(SyncRunStatus.Success, result.Status);
+        Assert.Equal(1, result.Pushed);
+        Assert.Equal(0, result.Pulled);
+        Assert.Equal(1, api.PushCount);
+        Assert.Equal(0, api.PullCount);
+    }
+
+    [Fact]
+    public async Task Download_only_pulls_remote_changes_without_uploading_local_queue()
+    {
+        using var queue = new SyncQueueStore(Path.Combine(_directory, "download-only.json"));
+        await queue.EnqueueAsync(FavoriteMutation(Guid.NewGuid()));
+        var remote = FavoriteMutation(Guid.NewGuid(), version: 1, title: "云端影片");
+        var api = new FakeSyncApi();
+        api.Pages.Enqueue(new SyncPullResponse(1, [remote]));
+        var library = new MemoryLibraryStore();
+        var engine = new SyncEngine(api, queue, library, new MemorySettingsStore());
+
+        var result = await engine.DownloadAsync(Guid.NewGuid());
+
+        Assert.Equal(SyncRunStatus.Success, result.Status);
+        Assert.Equal(0, result.Pushed);
+        Assert.Equal(1, result.Pulled);
+        Assert.Equal(0, api.PushCount);
+        Assert.Equal(1, api.PullCount);
+        Assert.Single((await queue.LoadAsync()).Items);
+        Assert.Single((await library.LoadAsync()).Favorites);
+    }
+
+    [Fact]
     public async Task Corrupt_queue_is_preserved_and_recovered_as_empty()
     {
         Directory.CreateDirectory(_directory);
@@ -264,12 +304,14 @@ public sealed class SyncEngineTests : IDisposable
         public Func<SyncPushRequest, IReadOnlyList<SyncPushResult>>? Push { get; init; }
         public Func<long, SyncPullResponse>? Pull { get; init; }
         public Queue<SyncPullResponse> Pages { get; } = new();
+        public int PushCount { get; private set; }
         public int PullCount { get; private set; }
 
         public Task<IReadOnlyList<SyncPushResult>> PushAsync(
             SyncPushRequest request,
             CancellationToken cancellationToken = default)
         {
+            PushCount++;
             if (Offline)
             {
                 throw new HttpRequestException("offline");

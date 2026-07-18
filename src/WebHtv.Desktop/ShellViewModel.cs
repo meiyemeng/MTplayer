@@ -20,7 +20,6 @@ namespace WebHtv.Desktop;
 internal sealed class ShellViewModel : INotifyPropertyChanged
 {
     private const int MaximumRemoteConfigurationBytes = 10 * 1024 * 1024;
-    private const string DefaultConfigurationAddress = "https://xn--sdds-rp5imh.v.nxog.top/apitv.php?id=3";
     private static readonly HttpClient ConfigurationHttpClient = new(new HttpClientHandler { UseProxy = true })
     {
         Timeout = TimeSpan.FromSeconds(20),
@@ -48,7 +47,7 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
     private readonly IReadOnlyList<ITvBoxCatalogueProvider> _catalogueProviders;
     private AppSettings _settings = new();
     private string _statusMessage = "正在检查本地配置…";
-    private string _configurationAddress = DefaultConfigurationAddress;
+    private string _configurationAddress = string.Empty;
     private string _searchKeyword = string.Empty;
     private bool _isPosterSettingsVisible;
     private double _posterWidth = 156;
@@ -211,15 +210,7 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
     public async Task LoadAsync()
     {
         _settings = await _settingsStore.LoadAsync();
-        if (_settings.ConfigurationSources.Count == 0)
-        {
-            _settings.ConfigurationSources.Add(new ConfigurationSourceEntry { Name = "默认配置", Address = DefaultConfigurationAddress });
-            _settings.ActiveConfigurationSourceId = _settings.ConfigurationSources[0].Id;
-            await _settingsStore.SaveAsync(_settings);
-        }
         RefreshManagedSources();
-        var activeSource = _settings.ConfigurationSources.FirstOrDefault(item => item.Id == _settings.ActiveConfigurationSourceId) ?? _settings.ConfigurationSources[0];
-        ConfigurationAddress = activeSource.Address;
         try
         {
             PosterWidth = await _posterWallPreferencesStore.LoadWidthAsync();
@@ -228,6 +219,17 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
         {
             PosterWidth = 156;
         }
+
+        var activeSource = _settings.ConfigurationSources.FirstOrDefault(item => item.Id == _settings.ActiveConfigurationSourceId)
+            ?? _settings.ConfigurationSources.FirstOrDefault();
+        if (activeSource is null)
+        {
+            ConfigurationAddress = string.Empty;
+            SiteOptions.Clear();
+            StatusMessage = "尚未添加配置源。请在设置中添加 HTTP 或 HTTPS TVBox 配置地址。";
+            return;
+        }
+        ConfigurationAddress = activeSource.Address;
 
         try
         {
@@ -359,12 +361,23 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
 
     public async Task RemoveConfigurationSourceAsync(ConfigurationSourceEntry entry)
     {
-        if (_settings.ConfigurationSources.Count <= 1) { StatusMessage = "至少保留一个配置源。"; return; }
         _settings.ConfigurationSources.RemoveAll(item => item.Id == entry.Id);
         if (_settings.ActiveConfigurationSourceId == entry.Id)
-            _settings.ActiveConfigurationSourceId = _settings.ConfigurationSources[0].Id;
+            _settings.ActiveConfigurationSourceId = _settings.ConfigurationSources.FirstOrDefault()?.Id ?? string.Empty;
         await _settingsStore.SaveAsync(_settings);
         RefreshManagedSources();
+        if (_settings.ConfigurationSources.Count == 0)
+        {
+            ConfigurationAddress = string.Empty;
+            SiteOptions.Clear();
+            ClearTopLists();
+            PosterWall.Clear();
+            StatusMessage = "配置源已全部删除。";
+            return;
+        }
+        var active = _settings.ConfigurationSources.First(item => item.Id == _settings.ActiveConfigurationSourceId);
+        ConfigurationAddress = active.Address;
+        await ImportFromAddressAsync();
     }
 
     public async Task AddCustomLiveSourceAsync(string name, string address, string? epgAddress)
@@ -535,6 +548,15 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
         {
             StatusMessage = $"首页 Top 10 加载失败：{exception.Message}";
         }
+    }
+
+    private void ClearTopLists()
+    {
+        TopMovies.Clear();
+        TopSeries.Clear();
+        TopAnime.Clear();
+        TopAnimeSeries.Clear();
+        TopVariety.Clear();
     }
 
     public async Task<PlayRequest?> GetFirstPlayRequestAsync(PosterCard card)
@@ -998,6 +1020,7 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
 
     private async Task<TvBoxProfile?> LoadCurrentProfileAsync()
     {
+        if (_settings.ConfigurationSources.Count == 0) return null;
         var document = await _configurationStore.LoadAsync();
         return IsEmpty(document) ? null : TvBoxProfileParser.Parse(document.SourceText).Profile;
     }

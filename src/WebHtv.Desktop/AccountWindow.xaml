@@ -48,7 +48,7 @@
           <StackPanel>
             <DockPanel><StackPanel><TextBlock Foreground="White" FontSize="18" FontWeight="SemiBold" Text="同步状态"/><TextBlock x:Name="AccountStateText" Foreground="#858E9C" Margin="0,6,0,0" Text="当前为游客模式"/></StackPanel><Border DockPanel.Dock="Right" Background="#16231E" BorderBrush="#28533F" BorderThickness="1" CornerRadius="12" Padding="11,6"><TextBlock x:Name="SyncBadgeText" Foreground="#66DDA6" Text="本地可用"/></Border></DockPanel>
             <TextBlock x:Name="StatusText" Foreground="#AEB5C0" TextWrapping="Wrap" Margin="0,16,0,0" Text="绑定服务器后可登录。"/>
-            <StackPanel Orientation="Horizontal" Margin="0,15,0,0"><Button x:Name="SyncButton" Style="{StaticResource PrimaryButton}" Content="立即同步" Click="Sync_Click" IsEnabled="False"/><Button x:Name="LogoutButton" Style="{StaticResource SecondaryButton}" Margin="10,0,0,0" Content="退出账号" Click="Logout_Click" IsEnabled="False"/></StackPanel>
+            <WrapPanel Margin="0,15,0,0"><Button x:Name="SyncButton" Style="{StaticResource PrimaryButton}" Content="双向同步" Click="Sync_Click" IsEnabled="False"/><Button x:Name="UploadButton" Style="{StaticResource SecondaryButton}" Margin="10,0,0,0" Content="上传本地数据" Click="Upload_Click" IsEnabled="False"/><Button x:Name="DownloadButton" Style="{StaticResource SecondaryButton}" Margin="10,0,0,0" Content="下载云端数据" Click="Download_Click" IsEnabled="False"/><Button x:Name="LogoutButton" Style="{StaticResource SecondaryButton}" Margin="10,0,0,0" Content="退出账号" Click="Logout_Click" IsEnabled="False"/></WrapPanel>
           </StackPanel>
         </Border>
         <TextBlock Foreground="#666F7D" TextWrapping="Wrap" Text="隐私说明：桌面端播放流量不经过同步服务器；服务器保存账号、收藏、观看进度和设置。网页端为解决浏览器跨域限制会按需转发媒体但不持久化。退出账号不会删除本地数据。"/>
