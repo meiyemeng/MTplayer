@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="32dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="MT播放器 · 账户与会员推送" android:textColor="#FFFFFFFF" android:textSize="28sp" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="同步仅保存用户授权的配置、收藏和播放记录；播放流不经过服务器。" android:textColor="#FFCCCCCC" android:textSize="16sp" />
+        <EditText android:id="@+id/memberServer" android:layout_width="match_parent" android:layout_height="56dp" android:layout_marginTop="28dp" android:hint="https://你的同步域名" android:inputType="textUri" android:textColor="#FFFFFFFF" android:textColorHint="#FFAAAAAA" />
+        <EditText android:id="@+id/memberEmail" android:layout_width="match_parent" android:layout_height="56dp" android:layout_marginTop="12dp" android:hint="邮箱" android:inputType="textEmailAddress" android:textColor="#FFFFFFFF" android:textColorHint="#FFAAAAAA" />
+        <EditText android:id="@+id/memberPassword" android:layout_width="match_parent" android:layout_height="56dp" android:layout_marginTop="12dp" android:hint="密码" android:inputType="textPassword" android:textColor="#FFFFFFFF" android:textColorHint="#FFAAAAAA" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="20dp" android:orientation="horizontal">
+            <Button android:id="@+id/memberLogin" android:layout_width="0dp" android:layout_height="56dp" android:layout_weight="1" android:text="登录并接收推送" />
+            <Button android:id="@+id/memberRegister" android:layout_width="0dp" android:layout_height="56dp" android:layout_marginStart="12dp" android:layout_weight="1" android:text="注册账户" />
+        </LinearLayout>
+        <Button android:id="@+id/memberRefresh" android:layout_width="match_parent" android:layout_height="56dp" android:layout_marginTop="12dp" android:text="单击检查会员推送与更新" />
+        <Button android:id="@+id/memberLogout" android:layout_width="match_parent" android:layout_height="56dp" android:layout_marginTop="12dp" android:text="退出登录" />
+        <TextView android:id="@+id/memberStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="24dp" android:textColor="#FFFFFFFF" android:textSize="16sp" />
+    </LinearLayout>
+</ScrollView>
