@@ -7,11 +7,11 @@
     "armeabi_v7a": "https://github.com/meiyemeng/MTplayer/releases/latest/download/MTPlayer-Android-mobile-armeabi_v7a.apk"
   },
   "sizes": {
-    "arm64_v8a": 117032658,
-    "armeabi_v7a": 102283732
+    "arm64_v8a": 117016274,
+    "armeabi_v7a": 102267348
   },
   "sha256s": {
-    "arm64_v8a": "6BBD968FCCB601187BAB0B87AC4F991DBEA1BE0B4FD43173D28338949305255F",
-    "armeabi_v7a": "BC962B8270B1A5D9D08E627592230BCD641BAF5CBD426B8FCB1BDB2FA4D4981E"
+    "arm64_v8a": "C3987F9C488DF1E3DB00078BDB7AE5E3956E1B6731DBF751E4FF9C3AF21782AA",
+    "armeabi_v7a": "67AF28A6E3967C1FD2607F711E1A8698B06E8D1BA2B46067A2FA6AD55E59A545"
   }
 }

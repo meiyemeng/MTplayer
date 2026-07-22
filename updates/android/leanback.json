@@ -7,11 +7,11 @@
     "armeabi_v7a": "https://github.com/meiyemeng/MTplayer/releases/latest/download/MTPlayer-Android-leanback-armeabi_v7a.apk"
   },
   "sizes": {
-    "arm64_v8a": 117205396,
-    "armeabi_v7a": 102456470
+    "arm64_v8a": 117189012,
+    "armeabi_v7a": 102440086
   },
   "sha256s": {
-    "arm64_v8a": "66CA05FA834924890106E5EDBED22D3154BB03730226BD90F665728BB0B68C88",
-    "armeabi_v7a": "FFE57F52A1E481935081D36C9A8ADF39546B66931832DB9D4CC61CFF24BE4978"
+    "arm64_v8a": "84E0A4FED69E4401468800E786446316B693549B3DA698C9B7DD0727D4D4F45B",
+    "armeabi_v7a": "B7B10553AB981063AB29886606A1407DEDC129E7111519CDBBF31D0554754402"
   }
 }
