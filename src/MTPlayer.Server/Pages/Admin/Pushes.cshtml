@@ -2,18 +2,20 @@
 @model MTPlayer.Server.Pages.Admin.PushesModel
 @{
     Layout = "/Pages/Shared/_AdminLayout.cshtml";
-    ViewData["Title"] = "会员推送";
-    ViewData["Description"] = "向指定会员等级统一下发配置源和直播源";
+    ViewData["Title"] = "资源推送与应用更新";
+    ViewData["Description"] = "点播/直播资源推送与 Android 应用更新是两条独立流程";
 }
 @if (!string.IsNullOrWhiteSpace(Model.StatusMessage)) { <div class="notice" role="status">@Model.StatusMessage</div> }
 <section class="panel span-12">
-    <div class="panel-heading"><div><p class="eyebrow">NEW PUSH</p><h2>新建推送</h2><p>每行填写“名称|HTTP/HTTPS 地址”。客户端只保存地址，不经服务器转发播放流。</p></div></div>
+    <div class="panel-heading"><div><p class="eyebrow">MEMBER DISTRIBUTION</p><h2>新建资源推送或应用更新</h2><p>资源推送用于下发点播/直播地址；Android 更新仅用于在线更新与更新说明。两类内容由客户端分别检查，播放流不经服务器转发。</p></div></div>
     <form method="post" asp-page-handler="Save" class="settings-form">
         <div class="field-grid"><label>推送标题<input name="title" required maxlength="200" /></label><label>最低会员等级<select name="minimumMembershipLevel"><option value="free">全部用户</option><option value="member">会员</option><option value="vip">VIP</option></select></label></div>
-        <label>通知正文<textarea name="message" rows="3" maxlength="2000" placeholder="客户端登录或下载同步后显示给符合条件的会员。"></textarea></label>
-        <div class="field-grid"><label>Android 更新版本（可选）<input name="androidVersion" maxlength="64" placeholder="例如：1.3.2" /></label><label>Android 下载地址（可选）<input name="androidDownloadUrl" type="url" placeholder="https://.../MTPlayer-Android.apk" /></label></div>
+        <label>推送说明 / 更新说明<textarea name="message" rows="3" maxlength="2000" placeholder="资源推送或版本更新时向符合条件的会员展示。"></textarea></label>
+        <h3>Android 在线更新（与资源推送独立）</h3>
+        <div class="field-grid"><label>Android 更新版本（可选）<input name="androidVersion" maxlength="64" placeholder="例如：1.3.4" /></label><label>Android 下载地址（可选）<input name="androidDownloadUrl" type="url" placeholder="https://.../MTPlayer-Android.apk" /></label></div>
         <label class="check-row"><input type="checkbox" name="forceAndroidUpdate" value="true" />Android 强制更新（必须同时填写版本号与下载地址）</label>
-        <div class="field-grid"><label>配置源<textarea name="configurationSources" rows="7" placeholder="影视仓|https://example.com/config.json"></textarea></label><label>直播源<textarea name="liveSources" rows="7" placeholder="电视直播|https://example.com/live.m3u"></textarea></label></div>
+        <h3>会员资源推送（与应用更新独立）</h3>
+        <div class="field-grid"><label>点播配置源<textarea name="configurationSources" rows="7" placeholder="影视仓|https://example.com/config.json"></textarea></label><label>直播源<textarea name="liveSources" rows="7" placeholder="电视直播|https://example.com/live.m3u"></textarea></label></div>
         <label class="check-row"><input type="checkbox" name="enabled" value="true" checked />立即启用</label>
         <button class="button primary" type="submit">保存并下发</button>
     </form>
@@ -24,10 +26,12 @@
     <form method="post" asp-page-handler="Save" class="settings-form">
         <input type="hidden" name="id" value="@push.Id" />
         <div class="field-grid"><label>推送标题<input name="title" value="@push.Title" required /></label><label>最低会员等级<select name="minimumMembershipLevel"><option value="free" selected="@(push.MinimumMembershipLevel == "free" ? "selected" : null)">全部用户</option><option value="member" selected="@(push.MinimumMembershipLevel == "member" ? "selected" : null)">会员</option><option value="vip" selected="@(push.MinimumMembershipLevel == "vip" ? "selected" : null)">VIP</option></select></label></div>
-        <label>通知正文<textarea name="message" rows="3" maxlength="2000">@push.Message</textarea></label>
+        <label>推送说明 / 更新说明<textarea name="message" rows="3" maxlength="2000">@push.Message</textarea></label>
+        <h3>Android 在线更新（独立检查）</h3>
         <div class="field-grid"><label>Android 更新版本（可选）<input name="androidVersion" maxlength="64" value="@push.AndroidVersion" /></label><label>Android 下载地址（可选）<input name="androidDownloadUrl" type="url" value="@push.AndroidDownloadUrl" /></label></div>
         <label class="check-row"><input type="checkbox" name="forceAndroidUpdate" value="true" checked="@push.ForceAndroidUpdate" />Android 强制更新</label>
-        <div class="field-grid"><label>配置源<textarea name="configurationSources" rows="5">@PushesModel.FormatSources(push.ConfigurationSources)</textarea></label><label>直播源<textarea name="liveSources" rows="5">@PushesModel.FormatSources(push.LiveSources)</textarea></label></div>
+        <h3>会员资源推送（独立接收）</h3>
+        <div class="field-grid"><label>点播配置源<textarea name="configurationSources" rows="5">@PushesModel.FormatSources(push.ConfigurationSources)</textarea></label><label>直播源<textarea name="liveSources" rows="5">@PushesModel.FormatSources(push.LiveSources)</textarea></label></div>
         <label class="check-row"><input type="checkbox" name="enabled" value="true" checked="@push.Enabled" />启用</label>
         <div class="row-actions"><button class="button primary" type="submit">保存修改</button><button class="button danger" type="submit" asp-page-handler="Delete" name="id" value="@push.Id" data-confirm="确定删除此推送吗？">删除</button></div>
     </form>

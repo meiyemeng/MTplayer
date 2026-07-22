@@ -31,6 +31,32 @@ public static class AdminEndpoints
             catch (ArgumentException exception) { return Problem(context, "invalid_membership", exception.Message, StatusCodes.Status400BadRequest); }
         });
 
+        // Resource distribution and client upgrades deliberately use different endpoints.
+        // A client may accept point-on-demand/live URLs without being prompted to update,
+        // and it may check release notes without changing its configured sources.
+        routes.MapGet("/api/v1/member/resources", async (HttpContext context, MembershipService memberships, CancellationToken ct) =>
+            CurrentUser.TryGetUserId(context.User, out var userId)
+                ? Results.Ok((await memberships.ListForUserAsync(userId, ct)).Select(push => new
+                {
+                    push.Id, push.Title, push.Message, push.MinimumMembershipLevel,
+                    push.ConfigurationSources, push.LiveSources, push.UpdatedAtUtc,
+                }))
+                : Results.Unauthorized())
+            .RequireAuthorization("sync-access");
+
+        routes.MapGet("/api/v1/member/updates/android", async (HttpContext context, MembershipService memberships, CancellationToken ct) =>
+            CurrentUser.TryGetUserId(context.User, out var userId)
+                ? Results.Ok((await memberships.ListForUserAsync(userId, ct))
+                    .Where(push => !string.IsNullOrWhiteSpace(push.AndroidVersion) && !string.IsNullOrWhiteSpace(push.AndroidDownloadUrl))
+                    .Select(push => new
+                    {
+                        push.Id, push.Title, push.Message, push.AndroidVersion, push.AndroidDownloadUrl,
+                        push.ForceAndroidUpdate, push.UpdatedAtUtc,
+                    }))
+                : Results.Unauthorized())
+            .RequireAuthorization("sync-access");
+
+        // Compatibility for prior web and desktop releases. New clients use the two endpoints above.
         routes.MapGet("/api/v1/member/pushes", async (HttpContext context, MembershipService memberships, CancellationToken ct) =>
             CurrentUser.TryGetUserId(context.User, out var userId)
                 ? Results.Ok(await memberships.ListForUserAsync(userId, ct))
