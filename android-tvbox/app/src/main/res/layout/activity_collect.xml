@@ -20,11 +20,12 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="@dimen/vs_50"
+            android:background="@drawable/mtplayer_section_badge"
             android:drawablePadding="@dimen/vs_10"
             android:gravity="center"
             android:text="收藏夹"
             android:textColor="@android:color/white"
-            android:textSize="@dimen/ts_34"
+            android:textSize="@dimen/ts_26"
             android:textStyle="bold" />
 
         <Space

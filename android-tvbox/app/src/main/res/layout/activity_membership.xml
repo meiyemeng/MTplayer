@@ -2,75 +2,84 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true"
-    android:background="@drawable/mtplayer_membership_background">
+    android:background="@drawable/mtplayer_app_background"
+    android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="32dp">
+        android:paddingLeft="52dp"
+        android:paddingTop="28dp"
+        android:paddingRight="52dp"
+        android:paddingBottom="28dp">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal">
-
             <ImageView
-                android:layout_width="58dp"
-                android:layout_height="58dp"
+                android:layout_width="54dp"
+                android:layout_height="54dp"
                 android:contentDescription="MT播放器"
                 android:src="@drawable/mtplayer_launcher" />
-
-            <LinearLayout
-                android:layout_width="0dp"
+            <TextView
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="16dp"
-                android:layout_weight="1"
-                android:orientation="vertical">
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="账户与云端"
-                    android:textColor="#FFFFF8F4"
-                    android:textSize="30sp"
-                    android:textStyle="bold" />
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="同步、会员资源与应用更新，各自独立操作"
-                    android:textColor="#FFAEB9C9"
-                    android:textSize="15sp" />
-            </LinearLayout>
+                android:layout_marginStart="18dp"
+                android:text="MT播放器"
+                android:textColor="#FFF7F5"
+                android:textSize="22sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
         <TextView
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="22dp"
-            android:text="影视播放流不会经过服务器。云端仅保存你主动上传的配置与偏好。"
-            android:textColor="#FFBFC9D8"
-            android:textSize="15sp" />
+            android:text="账户与云端"
+            android:textColor="#FFFF7B6E"
+            android:textSize="40sp"
+            android:textStyle="bold" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="点播与直播资源推送和应用版本更新互不混合"
+            android:textColor="#FFAAB5C6"
+            android:textSize="17sp" />
 
         <LinearLayout
             android:id="@+id/memberAuthForm"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="22dp"
-            android:background="@drawable/mtplayer_membership_panel"
+            android:layout_marginTop="24dp"
+            android:background="@drawable/mtplayer_glow_panel"
             android:orientation="vertical"
             android:padding="22dp">
-
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="登录或注册" android:textColor="#FFFFF8F4" android:textSize="20sp" android:textStyle="bold" />
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="默认服务器可直接使用，也可改为自己的 HTTPS 服务。" android:textColor="#FFAEB9C9" android:textSize="14sp" />
-            <EditText android:id="@+id/memberServer" android:layout_width="match_parent" android:layout_height="54dp" android:layout_marginTop="18dp" android:background="@drawable/mtplayer_membership_input" android:hint="https://mtplayer.salego.cn" android:inputType="textUri" android:paddingLeft="16dp" android:paddingRight="16dp" android:textColor="#FFFFFFFF" android:textColorHint="#FF8994A5" />
-            <EditText android:id="@+id/memberEmail" android:layout_width="match_parent" android:layout_height="54dp" android:layout_marginTop="10dp" android:background="@drawable/mtplayer_membership_input" android:hint="邮箱" android:inputType="textEmailAddress" android:paddingLeft="16dp" android:paddingRight="16dp" android:textColor="#FFFFFFFF" android:textColorHint="#FF8994A5" />
-            <EditText android:id="@+id/memberPassword" android:layout_width="match_parent" android:layout_height="54dp" android:layout_marginTop="10dp" android:background="@drawable/mtplayer_membership_input" android:hint="密码（至少 10 位）" android:inputType="textPassword" android:paddingLeft="16dp" android:paddingRight="16dp" android:textColor="#FFFFFFFF" android:textColorHint="#FF8994A5" />
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:orientation="horizontal">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="登录或注册"
+                android:textColor="#FFFF7B6E"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="5dp"
+                android:text="默认服务器可直接使用，也可以更换为自己的 HTTPS 服务。"
+                android:textColor="#FFAAB5C6"
+                android:textSize="14sp" />
+            <EditText android:id="@+id/memberServer" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="14dp" android:background="@drawable/mtplayer_membership_input" android:hint="https://mtplayer.salego.cn" android:inputType="textUri" android:paddingLeft="16dp" android:paddingRight="16dp" android:textColor="#FFFFFFFF" android:textColorHint="#FF8994A5" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:orientation="horizontal">
+                <EditText android:id="@+id/memberEmail" android:layout_width="0dp" android:layout_height="52dp" android:layout_weight="1" android:background="@drawable/mtplayer_membership_input" android:hint="邮箱" android:inputType="textEmailAddress" android:paddingLeft="16dp" android:paddingRight="16dp" android:textColor="#FFFFFFFF" android:textColorHint="#FF8994A5" />
+                <EditText android:id="@+id/memberPassword" android:layout_width="0dp" android:layout_height="52dp" android:layout_marginStart="12dp" android:layout_weight="1" android:background="@drawable/mtplayer_membership_input" android:hint="密码（至少 10 位）" android:inputType="textPassword" android:paddingLeft="16dp" android:paddingRight="16dp" android:textColor="#FFFFFFFF" android:textColorHint="#FF8994A5" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="14dp" android:orientation="horizontal">
                 <Button android:id="@+id/memberLogin" android:layout_width="0dp" android:layout_height="52dp" android:layout_weight="1" android:background="@drawable/mtplayer_membership_primary" android:text="登录" android:textColor="#FFFFFFFF" android:textSize="16sp" />
-                <Button android:id="@+id/memberRegister" android:layout_width="0dp" android:layout_height="52dp" android:layout_marginStart="12dp" android:layout_weight="1" android:background="@drawable/mtplayer_membership_secondary" android:text="注册账户" android:textColor="#FFF5F7FA" android:textSize="16sp" />
+                <Button android:id="@+id/memberRegister" android:layout_width="0dp" android:layout_height="52dp" android:layout_marginStart="12dp" android:layout_weight="1" android:background="@drawable/mtplayer_action_card" android:text="注册账户" android:textColor="#FFF5F7FA" android:textSize="16sp" />
             </LinearLayout>
         </LinearLayout>
 
@@ -78,35 +87,42 @@
             android:id="@+id/memberSignedPanel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="22dp"
-            android:background="@drawable/mtplayer_membership_panel"
+            android:layout_marginTop="24dp"
             android:orientation="vertical"
-            android:padding="22dp"
             android:visibility="gone">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="已登录" android:textColor="#FF87E6AD" android:textSize="18sp" android:textStyle="bold" />
-            <TextView android:id="@+id/memberSignedEmail" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:textColor="#FFFFF8F4" android:textSize="17sp" />
-            <TextView android:id="@+id/memberSignedServer" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:textColor="#FFAEB9C9" android:textSize="14sp" />
-            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="18dp" android:text="云同步" android:textColor="#FFFFD0C7" android:textSize="15sp" android:textStyle="bold" />
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal">
-                <Button android:id="@+id/memberUpload" android:layout_width="0dp" android:layout_height="50dp" android:layout_weight="1" android:background="@drawable/mtplayer_membership_secondary" android:text="上传全部本机配置" android:textColor="#FFFFFFFF" />
-                <Button android:id="@+id/memberDownload" android:layout_width="0dp" android:layout_height="50dp" android:layout_marginStart="12dp" android:layout_weight="1" android:background="@drawable/mtplayer_membership_secondary" android:text="下载到配置历史" android:textColor="#FFFFFFFF" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/mtplayer_glow_panel"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="22dp">
+                <TextView android:layout_width="80dp" android:layout_height="80dp" android:background="@drawable/mtplayer_outline_button" android:gravity="center" android:text="♙" android:textColor="#FFFF7166" android:textSize="42sp" />
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="22dp" android:layout_weight="1" android:orientation="vertical">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="账号" android:textColor="#FFFF7166" android:textSize="15sp" />
+                    <TextView android:id="@+id/memberSignedEmail" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:textColor="#FFFFF7F5" android:textSize="20sp" android:textStyle="bold" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="服务器" android:textColor="#FFFF7166" android:textSize="15sp" />
+                    <TextView android:id="@+id/memberSignedServer" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:textColor="#FFC4CDDB" android:textSize="16sp" />
+                </LinearLayout>
             </LinearLayout>
-            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="18dp" android:text="会员与版本" android:textColor="#FFFFD0C7" android:textSize="15sp" android:textStyle="bold" />
-            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal">
-                <Button android:id="@+id/memberResources" android:layout_width="0dp" android:layout_height="50dp" android:layout_weight="1" android:background="@drawable/mtplayer_membership_primary" android:text="接收点播与直播推送" android:textColor="#FFFFFFFF" />
-                <Button android:id="@+id/memberUpdate" android:layout_width="0dp" android:layout_height="50dp" android:layout_marginStart="12dp" android:layout_weight="1" android:background="@drawable/mtplayer_membership_secondary" android:text="检查应用更新" android:textColor="#FFFFFFFF" />
+
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="18dp" android:orientation="horizontal">
+                <Button android:id="@+id/memberUpload" android:layout_width="0dp" android:layout_height="116dp" android:layout_weight="1" android:background="@drawable/mtplayer_action_card" android:gravity="center" android:text="☁ ↑&#10;云端上传" android:textColor="#FFFF7B6E" android:textSize="18sp" />
+                <Button android:id="@+id/memberDownload" android:layout_width="0dp" android:layout_height="116dp" android:layout_marginStart="14dp" android:layout_weight="1" android:background="@drawable/mtplayer_action_card" android:gravity="center" android:text="☁ ↓&#10;云端下载" android:textColor="#FFFF7B6E" android:textSize="18sp" />
+                <Button android:id="@+id/memberResources" android:layout_width="0dp" android:layout_height="116dp" android:layout_marginStart="14dp" android:layout_weight="1" android:background="@drawable/mtplayer_action_card" android:gravity="center" android:text="♙ +&#10;接收会员资源" android:textColor="#FFFF7B6E" android:textSize="18sp" />
+                <Button android:id="@+id/memberUpdate" android:layout_width="0dp" android:layout_height="116dp" android:layout_marginStart="14dp" android:layout_weight="1" android:background="@drawable/mtplayer_action_card" android:gravity="center" android:text="↻&#10;检查应用更新" android:textColor="#FFFF7B6E" android:textSize="18sp" />
             </LinearLayout>
-            <Button android:id="@+id/memberLogout" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="18dp" android:background="@drawable/mtplayer_membership_secondary" android:text="退出登录" android:textColor="#FFFFB4AC" />
+            <Button android:id="@+id/memberLogout" android:layout_width="260dp" android:layout_height="52dp" android:layout_gravity="center_horizontal" android:layout_marginTop="18dp" android:background="@drawable/mtplayer_outline_button" android:text="退出登录" android:textColor="#FFFF7B6E" android:textSize="17sp" />
         </LinearLayout>
 
         <TextView
             android:id="@+id/memberStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:background="@drawable/mtplayer_membership_panel"
-            android:padding="16dp"
-            android:textColor="#FFE8EDF4"
-            android:textSize="15sp" />
+            android:layout_marginTop="16dp"
+            android:background="@drawable/mtplayer_glow_panel"
+            android:padding="14dp"
+            android:textColor="#FFDCE3EC"
+            android:textSize="14sp" />
     </LinearLayout>
 </ScrollView>
