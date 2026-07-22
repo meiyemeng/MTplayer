@@ -56,6 +56,16 @@ public static class AdminEndpoints
                 : Results.Unauthorized())
             .RequireAuthorization("sync-access");
 
+        // Ads are delivered only when an enabled push matches the user's membership.
+        // No configured advertisement means this returns an empty list: clients render no ad UI.
+        routes.MapGet("/api/v1/member/ads", async (HttpContext context, MembershipService memberships, CancellationToken ct) =>
+            CurrentUser.TryGetUserId(context.User, out var userId)
+                ? Results.Ok((await memberships.ListForUserAsync(userId, ct))
+                    .Select(push => new { push.Id, push.MinimumMembershipLevel, push.StartupAdvertisement, push.PreRollAdvertisement, push.UpdatedAtUtc })
+                    .Where(push => push.StartupAdvertisement is not null || push.PreRollAdvertisement is not null))
+                : Results.Unauthorized())
+            .RequireAuthorization("sync-access");
+
         // Compatibility for prior web and desktop releases. New clients use the two endpoints above.
         routes.MapGet("/api/v1/member/pushes", async (HttpContext context, MembershipService memberships, CancellationToken ct) =>
             CurrentUser.TryGetUserId(context.User, out var userId)

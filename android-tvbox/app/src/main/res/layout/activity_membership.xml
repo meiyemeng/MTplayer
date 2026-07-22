@@ -88,8 +88,8 @@
             <TextView android:id="@+id/memberSignedServer" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:textColor="#FFAEB9C9" android:textSize="14sp" />
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="18dp" android:text="云同步" android:textColor="#FFFFD0C7" android:textSize="15sp" android:textStyle="bold" />
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal">
-                <Button android:id="@+id/memberUpload" android:layout_width="0dp" android:layout_height="50dp" android:layout_weight="1" android:background="@drawable/mtplayer_membership_secondary" android:text="上传本机配置" android:textColor="#FFFFFFFF" />
-                <Button android:id="@+id/memberDownload" android:layout_width="0dp" android:layout_height="50dp" android:layout_marginStart="12dp" android:layout_weight="1" android:background="@drawable/mtplayer_membership_secondary" android:text="下载云端配置" android:textColor="#FFFFFFFF" />
+                <Button android:id="@+id/memberUpload" android:layout_width="0dp" android:layout_height="50dp" android:layout_weight="1" android:background="@drawable/mtplayer_membership_secondary" android:text="上传全部本机配置" android:textColor="#FFFFFFFF" />
+                <Button android:id="@+id/memberDownload" android:layout_width="0dp" android:layout_height="50dp" android:layout_marginStart="12dp" android:layout_weight="1" android:background="@drawable/mtplayer_membership_secondary" android:text="下载到配置历史" android:textColor="#FFFFFFFF" />
             </LinearLayout>
             <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="18dp" android:text="会员与版本" android:textColor="#FFFFD0C7" android:textSize="15sp" android:textStyle="bold" />
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:orientation="horizontal">

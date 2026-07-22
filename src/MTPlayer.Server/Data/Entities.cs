@@ -51,6 +51,11 @@ public sealed class MemberPushEntity
 
     public bool ForceAndroidUpdate { get; set; }
 
+    // Empty values mean no advertisements are exposed to clients.
+    public string? StartupAdvertisementJson { get; set; }
+
+    public string? PreRollAdvertisementJson { get; set; }
+
     public bool Enabled { get; set; }
 
     public DateTimeOffset CreatedAtUtc { get; set; }

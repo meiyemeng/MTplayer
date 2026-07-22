@@ -11,21 +11,27 @@ import com.github.tvbox.osc.api.ApiConfig;
 import com.github.tvbox.osc.base.BaseActivity;
 import com.github.tvbox.osc.membership.MembershipClient;
 import com.github.tvbox.osc.util.HawkConfig;
+import com.github.tvbox.osc.util.HistoryHelper;
+import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.orhanobut.hawk.Hawk;
 
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.Locale;
 import java.util.UUID;
 
-/** Account UI: cloud upload/download, resource distribution and app update are independent actions. */
+/** Account, cloud backup, member resources and app updates are separate actions. */
 public class MembershipActivity extends BaseActivity {
     private static final String CURRENT_VERSION = "1.3.3";
-    private static final String CONFIG_ID = "8bb704dd-0884-42e2-97d0-6d8f43b42b79";
+    private static final String SELECTED_CONFIG_ID = "8bb704dd-0884-42e2-97d0-6d8f43b42b79";
     private static final String LIVE_ID = "f26a5aed-b57f-4f4b-b06d-4e20e3f0a2ca";
+    private static final String LIVE_HISTORY_ID = "a3bd6714-7a0a-496c-aa19-e4ce8f338dbf";
+    private final Gson gson = new Gson();
     private MembershipClient client;
     private EditText server, email, password;
     private TextView status, signedEmail, signedServer;
@@ -35,19 +41,27 @@ public class MembershipActivity extends BaseActivity {
 
     @Override protected void init() {
         client = new MembershipClient(this);
-        server = findViewById(R.id.memberServer); email = findViewById(R.id.memberEmail);
-        password = findViewById(R.id.memberPassword); status = findViewById(R.id.memberStatus);
-        signedEmail = findViewById(R.id.memberSignedEmail); signedServer = findViewById(R.id.memberSignedServer);
-        authForm = findViewById(R.id.memberAuthForm); signedPanel = findViewById(R.id.memberSignedPanel);
+        server = findViewById(R.id.memberServer);
+        email = findViewById(R.id.memberEmail);
+        password = findViewById(R.id.memberPassword);
+        status = findViewById(R.id.memberStatus);
+        signedEmail = findViewById(R.id.memberSignedEmail);
+        signedServer = findViewById(R.id.memberSignedServer);
+        authForm = findViewById(R.id.memberAuthForm);
+        signedPanel = findViewById(R.id.memberSignedPanel);
         server.setText(client.server());
-        updateAccountUi("游客模式：可本地播放；登录后可上传、下载云端配置，并接收会员资源推送。");
+        updateAccountUi("游客模式：可本地播放；登录后可备份多个点播、直播地址，并接收会员资源或应用更新。");
         findViewById(R.id.memberLogin).setOnClickListener(v -> login());
         findViewById(R.id.memberRegister).setOnClickListener(v -> register());
         findViewById(R.id.memberUpload).setOnClickListener(v -> upload());
         findViewById(R.id.memberDownload).setOnClickListener(v -> download());
         findViewById(R.id.memberResources).setOnClickListener(v -> receiveResources());
         findViewById(R.id.memberUpdate).setOnClickListener(v -> checkUpdate());
-        findViewById(R.id.memberLogout).setOnClickListener(v -> { client.logout(); password.setText(""); updateAccountUi("已退出登录；本地配置和观看记录未删除。"); });
+        findViewById(R.id.memberLogout).setOnClickListener(v -> {
+            client.logout();
+            password.setText("");
+            updateAccountUi("已退出登录；本地点播、直播地址和观看记录未删除。");
+        });
     }
 
     private void updateAccountUi(String message) {
@@ -65,7 +79,7 @@ public class MembershipActivity extends BaseActivity {
         execute("正在登录…", () -> {
             client.saveServer(server.getText().toString());
             client.login(text(email), text(password));
-            runOnUiThread(() -> updateAccountUi("已登录。可分别选择上传、下载、接收资源推送或检查应用更新。"));
+            runOnUiThread(() -> updateAccountUi("已登录。可分别上传、下载、接收资源推送或检查应用更新。"));
         });
     }
 
@@ -82,24 +96,45 @@ public class MembershipActivity extends BaseActivity {
     private void receiveResources() { execute("正在接收点播与直播资源推送…", this::receiveResourcesInternal); }
     private void checkUpdate() { execute("正在检查 Android 更新…", this::checkUpdateInternal); }
 
+    /** Back up every saved TVBox address, the active address and live history. */
     private void uploadInternal() throws Exception {
         JsonArray mutations = new JsonArray();
         String api = Hawk.get(HawkConfig.API_URL, "");
         String live = Hawk.get(HawkConfig.LIVE_API_URL, "");
-        if (!api.isEmpty()) mutations.add(mutation(CONFIG_ID, "ConfigurationGroup", client.version(CONFIG_ID), payload("name", "MT播放器 Android 点播配置", "address", api)));
-        if (!live.isEmpty()) mutations.add(mutation(LIVE_ID, "Preference", client.version(LIVE_ID), payload("key", "liveApiUrl", "value", live)));
+        ArrayList<String> apiHistory = Hawk.get(HawkConfig.API_HISTORY, new ArrayList<String>());
+        if (!api.isEmpty() && !apiHistory.contains(api)) apiHistory.add(0, api);
+        for (String address : apiHistory) {
+            if (address == null || address.trim().isEmpty()) continue;
+            String id = stableId("config:" + address);
+            mutations.add(mutation(id, "ConfigurationGroup", client.version(id), configPayload(address)));
+        }
+        if (!api.isEmpty()) mutations.add(mutation(SELECTED_CONFIG_ID, "Preference", client.version(SELECTED_CONFIG_ID), preferencePayload("selectedApiUrl", api)));
+        if (!live.isEmpty()) mutations.add(mutation(LIVE_ID, "Preference", client.version(LIVE_ID), preferencePayload("liveApiUrl", live)));
+
+        ArrayList<String> liveHistory = Hawk.get(HawkConfig.LIVE_API_HISTORY, new ArrayList<String>());
+        if (!live.isEmpty() && !liveHistory.contains(live)) liveHistory.add(0, live);
+        JsonArray savedLives = new JsonArray();
+        for (String address : liveHistory) if (address != null && !address.trim().isEmpty()) savedLives.add(address);
+        if (savedLives.size() > 0) mutations.add(mutation(LIVE_HISTORY_ID, "Preference", client.version(LIVE_HISTORY_ID), preferencePayload("liveApiHistory", savedLives.toString())));
         if (mutations.size() == 0) throw new IllegalStateException("当前没有可上传的点播或直播地址");
+
         JsonArray result = client.syncPush(mutations);
+        int accepted = 0;
         for (JsonElement value : result) {
             if (!value.isJsonObject()) continue;
             JsonObject item = value.getAsJsonObject();
-            if (item.has("accepted") && item.get("accepted").getAsBoolean()) client.saveVersion(string(item, "id"), number(item, "version"));
+            if (item.has("accepted") && item.get("accepted").getAsBoolean()) {
+                client.saveVersion(string(item, "id"), number(item, "version"));
+                accepted++;
+            }
         }
-        show("已上传本机点播和直播配置。");
+        if (accepted == 0) throw new IllegalStateException("服务器未接收配置；请重新登录后再试");
+        show("已上传 " + accepted + " 项：当前配置、全部地址历史和直播历史均可在其他设备下载。");
     }
 
     private void downloadInternal() throws Exception {
-        long cursor = client.cursor(); int applied = 0;
+        long cursor = client.cursor();
+        int applied = 0;
         while (true) {
             JsonObject page = client.syncPull(cursor);
             JsonArray changes = array(page, "changes");
@@ -109,12 +144,7 @@ public class MembershipActivity extends BaseActivity {
             cursor = next;
         }
         client.saveCursor(cursor);
-        final int count = applied;
-        runOnUiThread(() -> ApiConfig.get().loadConfig(false, new ApiConfig.LoadConfigCallback() {
-            @Override public void success() { status.setText("已下载云端配置，应用了 " + count + " 项；点播配置已刷新。"); }
-            @Override public void error(String value) { status.setText("已下载 " + count + " 项，但点播配置刷新失败：" + value); }
-            @Override public void notice(String value) { status.setText("已下载云端配置：" + value); }
-        }, MembershipActivity.this));
+        refreshPointConfig("已下载云端配置，写入 " + applied + " 项；可在配置历史中自由切换。");
     }
 
     private boolean applyChange(JsonObject change) {
@@ -123,11 +153,28 @@ public class MembershipActivity extends BaseActivity {
         String kind = string(change, "kind");
         if ("ConfigurationGroup".equals(kind)) {
             String address = string(data, "address");
-            if (!address.isEmpty()) { Hawk.put(HawkConfig.API_URL, address); return true; }
+            if (!address.isEmpty()) { HistoryHelper.setApiHistory(address); return true; }
         }
-        if ("Preference".equals(kind) && "liveApiUrl".equals(string(data, "key"))) {
-            String address = string(data, "value");
-            if (!address.isEmpty()) { Hawk.put(HawkConfig.LIVE_API_URL, address); return true; }
+        if (!"Preference".equals(kind)) return false;
+        String key = string(data, "key");
+        String value = string(data, "value");
+        if ("selectedApiUrl".equals(key) && !value.isEmpty()) {
+            HistoryHelper.setApiHistory(value);
+            Hawk.put(HawkConfig.API_URL, value);
+            return true;
+        }
+        if ("liveApiUrl".equals(key) && !value.isEmpty()) {
+            HistoryHelper.setLiveApiHistory(value);
+            Hawk.put(HawkConfig.LIVE_API_URL, value);
+            return true;
+        }
+        if ("liveApiHistory".equals(key)) {
+            try {
+                JsonArray addresses = gson.fromJson(value, JsonArray.class);
+                if (addresses == null) return false;
+                for (JsonElement address : addresses) if (address.isJsonPrimitive()) HistoryHelper.setLiveApiHistory(address.getAsString());
+                return addresses.size() > 0;
+            } catch (Exception ignored) { return false; }
         }
         return false;
     }
@@ -141,19 +188,22 @@ public class MembershipActivity extends BaseActivity {
             for (JsonElement source : array(push, "configurationSources")) {
                 if (!source.isJsonObject()) continue;
                 String address = string(source.getAsJsonObject(), "address");
-                if (!address.isEmpty() && sources++ == 0) Hawk.put(HawkConfig.API_URL, address);
+                if (!address.isEmpty()) { HistoryHelper.setApiHistory(address); if (sources++ == 0) Hawk.put(HawkConfig.API_URL, address); }
             }
             for (JsonElement source : array(push, "liveSources")) {
                 if (!source.isJsonObject()) continue;
                 String address = string(source.getAsJsonObject(), "address");
-                if (!address.isEmpty() && lives++ == 0) Hawk.put(HawkConfig.LIVE_API_URL, address);
+                if (!address.isEmpty()) { HistoryHelper.setLiveApiHistory(address); if (lives++ == 0) Hawk.put(HawkConfig.LIVE_API_URL, address); }
             }
         }
-        final int configCount = sources, liveCount = lives;
+        refreshPointConfig("已接收会员资源：点播 " + sources + " 个，直播 " + lives + " 个；均已加入历史便于切换。");
+    }
+
+    private void refreshPointConfig(String successMessage) {
         runOnUiThread(() -> ApiConfig.get().loadConfig(false, new ApiConfig.LoadConfigCallback() {
-            @Override public void success() { status.setText("已接收会员资源：点播 " + configCount + " 个，直播 " + liveCount + " 个。"); }
-            @Override public void error(String value) { status.setText("已接收资源，但点播配置刷新失败：" + value); }
-            @Override public void notice(String value) { status.setText("已接收会员资源：" + value); }
+            @Override public void success() { status.setText(successMessage); }
+            @Override public void error(String value) { status.setText(successMessage + " 当前点播配置刷新失败：" + value); }
+            @Override public void notice(String value) { status.setText(successMessage); }
         }, MembershipActivity.this));
     }
 
@@ -180,11 +230,31 @@ public class MembershipActivity extends BaseActivity {
 
     private JsonObject mutation(String id, String kind, long version, JsonObject value) {
         JsonObject result = new JsonObject();
-        result.addProperty("id", id); result.addProperty("kind", kind); result.addProperty("baseVersion", version);
-        result.addProperty("modifiedAtUtc", timestamp()); result.addProperty("isDeleted", false); result.add("payload", value);
+        result.addProperty("id", id);
+        result.addProperty("kind", kind);
+        result.addProperty("baseVersion", version);
+        result.addProperty("modifiedAtUtc", timestamp());
+        result.addProperty("isDeleted", false);
+        result.add("payload", value);
         return result;
     }
-    private static JsonObject payload(String... values) { JsonObject result = new JsonObject(); for (int i = 0; i + 1 < values.length; i += 2) result.addProperty(values[i], values[i + 1]); return result; }
+
+    private static JsonObject configPayload(String address) {
+        JsonObject result = new JsonObject();
+        result.addProperty("name", "点播配置");
+        result.addProperty("address", address);
+        result.addProperty("isEnabled", true);
+        return result;
+    }
+
+    private static JsonObject preferencePayload(String key, String value) {
+        JsonObject result = new JsonObject();
+        result.addProperty("key", key);
+        result.addProperty("value", value);
+        return result;
+    }
+
+    private static String stableId(String value) { return UUID.nameUUIDFromBytes(value.getBytes(StandardCharsets.UTF_8)).toString(); }
     private static String timestamp() { return new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US).format(new Date()); }
     private void execute(String progress, Task task) { status.setText(progress); new Thread(() -> { try { task.run(); } catch (Exception e) { show("操作失败：" + e.getMessage()); } }).start(); }
     private void show(String value) { runOnUiThread(() -> status.setText(value)); }

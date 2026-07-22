@@ -34,6 +34,8 @@ internal sealed class MemberPushEntityConfiguration : IEntityTypeConfiguration<M
         builder.Property(push => push.LiveSourcesJson).HasColumnType("jsonb");
         builder.Property(push => push.AndroidVersion).HasMaxLength(64);
         builder.Property(push => push.AndroidDownloadUrl).HasMaxLength(2_000);
+        builder.Property(push => push.StartupAdvertisementJson).HasColumnType("jsonb");
+        builder.Property(push => push.PreRollAdvertisementJson).HasColumnType("jsonb");
         builder.Property(push => push.CreatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
         builder.Property(push => push.UpdatedAtUtc).HasDefaultValueSql("CURRENT_TIMESTAMP");
         builder.HasIndex(push => new { push.Enabled, push.MinimumMembershipLevel });

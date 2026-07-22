@@ -5,6 +5,7 @@ using MTPlayer.Server.Data;
 namespace MTPlayer.Server.Membership;
 
 public sealed record MemberSource(string Name, string Address);
+public sealed record MemberAdvertisement(string Title, string MediaUrl, string? ClickUrl);
 public sealed record MemberPushView(
     Guid Id,
     string Title,
@@ -15,6 +16,8 @@ public sealed record MemberPushView(
     string? AndroidVersion,
     string? AndroidDownloadUrl,
     bool ForceAndroidUpdate,
+    MemberAdvertisement? StartupAdvertisement,
+    MemberAdvertisement? PreRollAdvertisement,
     bool Enabled,
     DateTimeOffset UpdatedAtUtc);
 public sealed record MemberPushUpdate(
@@ -26,7 +29,9 @@ public sealed record MemberPushUpdate(
     string? Message = null,
     string? AndroidVersion = null,
     string? AndroidDownloadUrl = null,
-    bool ForceAndroidUpdate = false);
+    bool ForceAndroidUpdate = false,
+    MemberAdvertisement? StartupAdvertisement = null,
+    MemberAdvertisement? PreRollAdvertisement = null);
 public sealed record MembershipUpdate(string Level, DateTimeOffset? ExpiresAtUtc);
 
 public sealed class MembershipService(ApiDbContext db, TimeProvider timeProvider)
@@ -73,6 +78,8 @@ public sealed class MembershipService(ApiDbContext db, TimeProvider timeProvider
         var androidVersion = string.IsNullOrWhiteSpace(update.AndroidVersion) ? null : update.AndroidVersion.Trim();
         if (androidVersion?.Length > 64) throw new ArgumentException("Android 版本号不能超过 64 个字符。");
         var androidDownloadUrl = string.IsNullOrWhiteSpace(update.AndroidDownloadUrl) ? null : update.AndroidDownloadUrl.Trim();
+        var startupAdvertisement = NormalizeAdvertisement(update.StartupAdvertisement, "Startup advertisement");
+        var preRollAdvertisement = NormalizeAdvertisement(update.PreRollAdvertisement, "Pre-roll advertisement");
         if (androidDownloadUrl is not null && (!Uri.TryCreate(androidDownloadUrl, UriKind.Absolute, out var updateUri) || updateUri.Scheme is not ("http" or "https")))
             throw new ArgumentException("Android 更新地址必须是 HTTP 或 HTTPS 地址。");
         if (update.ForceAndroidUpdate && (androidVersion is null || androidDownloadUrl is null))
@@ -94,6 +101,8 @@ public sealed class MembershipService(ApiDbContext db, TimeProvider timeProvider
         entity.AndroidVersion = androidVersion;
         entity.AndroidDownloadUrl = androidDownloadUrl;
         entity.ForceAndroidUpdate = update.ForceAndroidUpdate;
+        entity.StartupAdvertisementJson = SerializeAdvertisement(startupAdvertisement);
+        entity.PreRollAdvertisementJson = SerializeAdvertisement(preRollAdvertisement);
         entity.Enabled = update.Enabled;
         entity.UpdatedAtUtc = now;
         if (db.Entry(entity).State == EntityState.Detached) db.MemberPushes.Add(entity);
@@ -114,6 +123,8 @@ public sealed class MembershipService(ApiDbContext db, TimeProvider timeProvider
         value.AndroidVersion,
         value.AndroidDownloadUrl,
         value.ForceAndroidUpdate,
+        ParseAdvertisement(value.StartupAdvertisementJson),
+        ParseAdvertisement(value.PreRollAdvertisementJson),
         value.Enabled,
         value.UpdatedAtUtc);
 
@@ -138,5 +149,28 @@ public sealed class MembershipService(ApiDbContext db, TimeProvider timeProvider
     {
         try { return JsonSerializer.Deserialize<MemberSource[]>(json) ?? []; }
         catch (JsonException) { return []; }
+    }
+
+    private static MemberAdvertisement? NormalizeAdvertisement(MemberAdvertisement? value, string label)
+    {
+        if (value is null || string.IsNullOrWhiteSpace(value.MediaUrl)) return null;
+        var title = value.Title?.Trim() ?? string.Empty;
+        var mediaUrl = value.MediaUrl.Trim();
+        var clickUrl = string.IsNullOrWhiteSpace(value.ClickUrl) ? null : value.ClickUrl.Trim();
+        if (title.Length is 0 or > 200) throw new ArgumentException($"{label} title must be 1 to 200 characters.");
+        if (!IsHttpUrl(mediaUrl)) throw new ArgumentException($"{label} media URL must use HTTP or HTTPS.");
+        if (clickUrl is not null && !IsHttpUrl(clickUrl)) throw new ArgumentException($"{label} click URL must use HTTP or HTTPS.");
+        return new MemberAdvertisement(title, mediaUrl, clickUrl);
+    }
+
+    private static bool IsHttpUrl(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
+
+    private static string? SerializeAdvertisement(MemberAdvertisement? value) => value is null ? null : JsonSerializer.Serialize(value);
+
+    private static MemberAdvertisement? ParseAdvertisement(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<MemberAdvertisement>(json); }
+        catch (JsonException) { return null; }
     }
 }

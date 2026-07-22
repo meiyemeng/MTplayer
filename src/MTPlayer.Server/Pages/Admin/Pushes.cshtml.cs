@@ -16,13 +16,17 @@ public sealed class PushesModel(MembershipService memberships) : PageModel
 
     public async Task<IActionResult> OnPostSaveAsync(Guid? id, string title, string minimumMembershipLevel,
         string? configurationSources, string? liveSources, bool enabled, string? message,
-        string? androidVersion, string? androidDownloadUrl, bool forceAndroidUpdate, CancellationToken ct)
+        string? androidVersion, string? androidDownloadUrl, bool forceAndroidUpdate,
+        string? startupAdTitle, string? startupAdMediaUrl, string? startupAdClickUrl,
+        string? preRollAdTitle, string? preRollAdMediaUrl, string? preRollAdClickUrl, CancellationToken ct)
     {
         try
         {
             await memberships.SaveAsync(id, new MemberPushUpdate(title, minimumMembershipLevel,
                 ParseSources(configurationSources), ParseSources(liveSources), enabled,
-                message, androidVersion, androidDownloadUrl, forceAndroidUpdate), ct);
+                message, androidVersion, androidDownloadUrl, forceAndroidUpdate,
+                Advertisement(startupAdTitle, startupAdMediaUrl, startupAdClickUrl),
+                Advertisement(preRollAdTitle, preRollAdMediaUrl, preRollAdClickUrl)), ct);
             StatusMessage = "会员推送已保存，客户端下次下载或双向同步时自动接收。";
         }
         catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException) { StatusMessage = ex.Message; }
@@ -42,4 +46,7 @@ public sealed class PushesModel(MembershipService memberships) : PageModel
         .Select(line => line.Split('|', 2, StringSplitOptions.TrimEntries))
         .Where(parts => parts.Length == 2)
         .Select(parts => new MemberSource(parts[0], parts[1])).ToArray();
+
+    private static MemberAdvertisement? Advertisement(string? title, string? mediaUrl, string? clickUrl) =>
+        string.IsNullOrWhiteSpace(mediaUrl) ? null : new MemberAdvertisement(title ?? string.Empty, mediaUrl, clickUrl);
 }
