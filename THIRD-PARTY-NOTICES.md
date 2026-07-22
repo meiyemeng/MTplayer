@@ -11,3 +11,9 @@ Licensed under the BSD 2-Clause License. The upstream project and full license t
 ## LibreTV reference
 
 The MTPlayer web client was independently implemented for this repository. LibreTV was used as a product-layout and interaction reference; no LibreTV application source code was copied into the MTPlayer client. LibreTV is available under GPL-3.0 at <https://github.com/LibreSpark/LibreTV>.
+# Android TVBoxOS derivative
+
+The `android-tvbox/` Android client is derived from
+IsayIsee/TVBoxOS and is distributed under the GNU Affero General Public License
+v3.0. Its full corresponding source and the upstream license are included in
+`android-tvbox/`.
