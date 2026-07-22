@@ -333,7 +333,7 @@ public final class ConfigurationRepository {
     }
 
     private String download(String url) throws IOException {
-        Request request = new Request.Builder().url(url).header("User-Agent", "MTPlayer/1.3.1 Android").build();
+        Request request = new Request.Builder().url(url).header("User-Agent", "MTPlayer/1.3.2 Android").build();
         try (Response response = http.newCall(request).execute()) {
             if (!response.isSuccessful() || response.body() == null) throw new IOException("配置下载失败：HTTP " + response.code());
             if (response.body().contentLength() > MAX_CONFIG_BYTES) throw new IOException("配置文件超过 10 MiB");

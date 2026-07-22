@@ -82,6 +82,10 @@ public sealed class MembershipAndSourceTests(PostgreSqlAuthFixture fixture) : IC
                 "member",
                 [new MemberSource("会员仓库", "https://member.example/config.json")],
                 [new MemberSource("会员直播", "https://member.example/live.m3u")],
+                true,
+                "会员可使用本期片源。",
+                "1.3.2",
+                "https://downloads.example/MTPlayer-Android-1.3.2.apk",
                 true));
         Assert.Equal(HttpStatusCode.OK, created.StatusCode);
         var push = (await created.Content.ReadFromJsonAsync<MemberPushView>())!;
@@ -93,6 +97,10 @@ public sealed class MembershipAndSourceTests(PostgreSqlAuthFixture fixture) : IC
         Assert.Equal(push.Id, memberPush.Id);
         Assert.Equal("https://member.example/config.json", Assert.Single(memberPush.ConfigurationSources).Address);
         Assert.Equal("https://member.example/live.m3u", Assert.Single(memberPush.LiveSources).Address);
+        Assert.Equal("会员可使用本期片源。", memberPush.Message);
+        Assert.Equal("1.3.2", memberPush.AndroidVersion);
+        Assert.Equal("https://downloads.example/MTPlayer-Android-1.3.2.apk", memberPush.AndroidDownloadUrl);
+        Assert.True(memberPush.ForceAndroidUpdate);
 
         Assert.Equal(HttpStatusCode.NoContent, (await adminClient.DeleteAsync($"/api/v1/admin/member-pushes/{push.Id}")).StatusCode);
     }

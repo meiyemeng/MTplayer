@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import cn.mtplayer.core.account.AccountClient;
+import cn.mtplayer.core.BuildContract;
 import cn.mtplayer.core.config.ConfigurationRepository;
 import cn.mtplayer.core.config.SourceGroup;
 import cn.mtplayer.core.model.MediaItem;
@@ -26,7 +27,29 @@ public final class AndroidSyncService {
     public static final class Result {
         public final int pushed;
         public final int pulled;
-        Result(int pushed, int pulled) { this.pushed = pushed; this.pulled = pulled; }
+        public final List<Notice> notices;
+        Result(int pushed, int pulled) { this(pushed, pulled, new ArrayList<>()); }
+        Result(int pushed, int pulled, List<Notice> notices) { this.pushed = pushed; this.pulled = pulled; this.notices = notices; }
+    }
+
+    /** A backend-managed member message, optionally carrying an Android update link. */
+    public static final class Notice {
+        public final String id;
+        public final String title;
+        public final String message;
+        public final String androidVersion;
+        public final String androidDownloadUrl;
+        public final boolean forceAndroidUpdate;
+
+        Notice(String id, String title, String message, String androidVersion, String androidDownloadUrl, boolean forceAndroidUpdate) {
+            this.id = id; this.title = title; this.message = message;
+            this.androidVersion = androidVersion; this.androidDownloadUrl = androidDownloadUrl;
+            this.forceAndroidUpdate = forceAndroidUpdate;
+        }
+
+        public boolean hasNewAndroidVersion() {
+            return !blank(androidVersion) && compareVersions(androidVersion, BuildContract.VERSION) > 0;
+        }
     }
 
     private final AccountClient account;
@@ -44,7 +67,7 @@ public final class AndroidSyncService {
     public Result synchronize() throws Exception {
         Result uploaded = upload();
         Result downloaded = download();
-        return new Result(uploaded.pushed, downloaded.pulled);
+        return new Result(uploaded.pushed, downloaded.pulled, downloaded.notices);
     }
 
     public Result upload() throws Exception {
@@ -122,17 +145,19 @@ public final class AndroidSyncService {
             prefs.edit().putLong("cursor", cursor).apply();
             if (count < 500) break;
         }
-        applyMemberPushes();
-        return new Result(0, pulled);
+        return new Result(0, pulled, applyMemberPushes());
     }
 
-    private void applyMemberPushes() throws Exception {
+    private List<Notice> applyMemberPushes() throws Exception {
         JsonElement raw = account.authorizedGet("/api/v1/member/pushes");
         List<SourceGroup> groups = new ArrayList<>();
         List<LiveChannel> lives = new ArrayList<>();
+        List<Notice> notices = new ArrayList<>();
         if (raw != null && raw.isJsonArray()) for (JsonElement item : raw.getAsJsonArray()) {
             if (!item.isJsonObject()) continue;
             JsonObject push = item.getAsJsonObject(); String pushId = string(push, "id");
+            notices.add(new Notice(pushId, fallback(string(push, "title"), "会员推送"), string(push, "message"),
+                    string(push, "androidVersion"), string(push, "androidDownloadUrl"), bool(push, "forceAndroidUpdate")));
             JsonElement configurations = push.get("configurationSources");
             if (configurations != null && configurations.isJsonArray()) for (JsonElement sourceRaw : configurations.getAsJsonArray()) {
                 if (!sourceRaw.isJsonObject()) continue; JsonObject source = sourceRaw.getAsJsonObject();
@@ -148,6 +173,7 @@ public final class AndroidSyncService {
         }
         configurations.replaceManagedGroups(groups);
         configurations.replaceManagedLives(lives);
+        return notices;
     }
 
     private JsonObject mutation(String id, String kind, JsonObject payload) {
@@ -243,4 +269,19 @@ public final class AndroidSyncService {
     private static boolean bool(JsonObject value, String name) { return value.has(name) && value.get(name).isJsonPrimitive() && value.get(name).getAsBoolean(); }
     private static boolean blank(String value) { return value == null || value.trim().isEmpty(); }
     private static String fallback(String value, String fallback) { return blank(value) ? fallback : value; }
+    private static int compareVersions(String left, String right) {
+        String[] leftParts = left.replaceFirst("^[vV]", "").split("[.-]");
+        String[] rightParts = right.replaceFirst("^[vV]", "").split("[.-]");
+        int length = Math.max(leftParts.length, rightParts.length);
+        for (int index = 0; index < length; index++) {
+            int a = index < leftParts.length ? number(leftParts[index]) : 0;
+            int b = index < rightParts.length ? number(rightParts[index]) : 0;
+            if (a != b) return Integer.compare(a, b);
+        }
+        return 0;
+    }
+    private static int number(String value) {
+        try { return Integer.parseInt(value.replaceAll("[^0-9]", "")); }
+        catch (RuntimeException ignored) { return 0; }
+    }
 }

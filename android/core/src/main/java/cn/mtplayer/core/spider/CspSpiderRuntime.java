@@ -144,7 +144,7 @@ public final class CspSpiderRuntime {
     }
 
     private void downloadJar(String address, File target) throws IOException {
-        Request request = new Request.Builder().url(address).header("User-Agent", "MTPlayer/1.3.1 Android").build();
+        Request request = new Request.Builder().url(address).header("User-Agent", "MTPlayer/1.3.2 Android").build();
         File temporary = new File(target.getAbsolutePath() + ".download");
         try (Response response = jarHttp.newCall(request).execute()) {
             if (!response.isSuccessful() || response.body() == null) throw new IOException("Spider JAR 下载失败：HTTP " + response.code());

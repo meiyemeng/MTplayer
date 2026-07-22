@@ -2,6 +2,7 @@ package cn.mtplayer.mobile;
 
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.InputType;
 import android.view.Gravity;
@@ -104,11 +105,22 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void accountAction(EditText server,EditText email,EditText password,TextView status,boolean register){
-        try{AppServices.account.bind(server.getText().toString());}catch(Exception ex){status.setText(message(ex));return;}status.setText(register?"正在注册…":"正在登录…");executor.execute(()->{try{if(register){AppServices.account.register(email.getText().toString().trim(),password.getText().toString());runOnUiThread(()->status.setText("注册请求已提交，请按服务器设置完成邮箱验证后登录。"));}else{AppServices.account.login(email.getText().toString().trim(),password.getText().toString(),"android-mobile");runOnUiThread(()->status.setText("登录成功，可选择上传、下载或双向同步。"));}}catch(Exception ex){runOnUiThread(()->status.setText((register?"注册失败：":"登录失败：")+message(ex)));}});
+        try{AppServices.account.bind(server.getText().toString());}catch(Exception ex){status.setText(message(ex));return;}status.setText(register?"正在注册…":"正在登录…");executor.execute(()->{try{if(register){AppServices.account.register(email.getText().toString().trim(),password.getText().toString());runOnUiThread(()->status.setText("注册请求已提交，请按服务器设置完成邮箱验证后登录。"));}else{AppServices.account.login(email.getText().toString().trim(),password.getText().toString(),"android-mobile");AndroidSyncService.Result received=sync.download();runOnUiThread(()->{status.setText("登录成功，已接收服务器推送。可选择上传、下载或双向同步。");showNotices(received.notices);});}}catch(Exception ex){runOnUiThread(()->status.setText((register?"注册失败：":"登录失败：")+message(ex)));}});
     }
 
     private void runSync(TextView status,int mode){if(!AppServices.account.signedIn()){status.setText("请先登录再同步。");return;}status.setText(mode==1?"正在上传本地数据…":mode==2?"正在下载云端数据…":"正在双向同步…");executor.execute(()->runSyncInBackground(status,mode));}
-    private void runSyncInBackground(TextView status,int mode){try{AndroidSyncService.Result result=mode==1?sync.upload():mode==2?sync.download():sync.synchronize();runOnUiThread(()->status.setText("同步完成：上传 "+result.pushed+" 项，下载 "+result.pulled+" 项。"));}catch(Exception ex){runOnUiThread(()->status.setText("同步失败："+message(ex)));}}
+    private void runSyncInBackground(TextView status,int mode){try{AndroidSyncService.Result result=mode==1?sync.upload():mode==2?sync.download():sync.synchronize();runOnUiThread(()->{status.setText("同步完成：上传 "+result.pushed+" 项，下载 "+result.pulled+" 项。");showNotices(result.notices);});}catch(Exception ex){runOnUiThread(()->status.setText("同步失败："+message(ex)));}}
+
+    private void showNotices(List<AndroidSyncService.Notice> notices){
+        for(AndroidSyncService.Notice notice:notices){
+            if((notice.message==null||notice.message.isBlank())&&!notice.hasNewAndroidVersion())continue;
+            String text=(notice.message==null?"":notice.message.trim());
+            if(notice.hasNewAndroidVersion())text+=(text.isEmpty()?"":"\n\n")+"发现 Android 新版本 "+notice.androidVersion+"。";
+            AlertDialog.Builder dialog=new AlertDialog.Builder(this).setTitle(notice.title).setMessage(text);
+            if(notice.hasNewAndroidVersion()&&!notice.androidDownloadUrl.isBlank())dialog.setPositiveButton("下载更新",(d,w)->startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(notice.androidDownloadUrl))));
+            dialog.setNegativeButton(notice.forceAndroidUpdate?"继续使用":"关闭",null).show();
+        }
+    }
 
     private void showSettings(){
         ScrollView scroll=new ScrollView(this);LinearLayout root=page("数据来源","配置源管理");
@@ -127,7 +139,7 @@ public final class MainActivity extends AppCompatActivity {
         root.addView(gateway,Ui.matchWrap());
         root.addView(Ui.text(this,"供 Windows/Web 调用 Android CSP 插件。端口："+AppServices.spiderGateway.port()+"\n令牌："+AppServices.spiderGateway.token()+"\n仅在可信局域网使用。"),Ui.matchWrap());
         gateway.setOnClickListener(v->{try{AppServices.spiderGateway.setEnabled(!AppServices.spiderGateway.isEnabled());showSettings();}catch(Exception ex){toast(message(ex));}});
-        TextView about=Ui.text(this,"MT播放器 1.3.1\n软件不预置任何内容源，仅播放用户自行配置且有权访问的内容。用户应遵守所在地法律及内容授权规则。\n\n源码与下载：https://github.com/meiyemeng/MTplayer/releases/latest");
+        TextView about=Ui.text(this,"MT播放器 1.3.2\n软件不预置任何内容源，仅播放用户自行配置且有权访问的内容。用户应遵守所在地法律及内容授权规则。\n\n源码与下载：https://github.com/meiyemeng/MTplayer/releases/latest");
         about.setPadding(0,Ui.dp(this,28),0,Ui.dp(this,20));root.addView(about,Ui.matchWrap());
         add.setOnClickListener(v->sourceDialog());scroll.addView(root);setPage(scroll);
     }
@@ -135,7 +147,7 @@ public final class MainActivity extends AppCompatActivity {
     private void showAbout(){
         ScrollView scroll=new ScrollView(this);LinearLayout root=page("ABOUT MT PLAYER","关于软件");
         ImageView logo=new ImageView(this);logo.setScaleType(ImageView.ScaleType.CENTER_INSIDE);Glide.with(this).load(R.drawable.logo_header).into(logo);root.addView(logo,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,100)));
-        root.addView(Ui.title(this,"MT播放器 Android · 1.3.1",22),Ui.matchWrap());
+        root.addView(Ui.title(this,"MT播放器 Android · 1.3.2",22),Ui.matchWrap());
         root.addView(Ui.text(this,"源码仓库：https://github.com/meiyemeng/MTplayer\n客户端下载：https://github.com/meiyemeng/MTplayer/releases/latest\n\n软件不预置、不存储、不上传、不分发任何影视内容，仅播放用户自行配置且有权访问的媒体。"),Ui.matchWrap());
         root.addView(Ui.title(this,"支持项目",20),Ui.matchWrap());
         ImageView donate=new ImageView(this);donate.setScaleType(ImageView.ScaleType.CENTER_INSIDE);Glide.with(this).load(R.drawable.alipay_donate).into(donate);root.addView(donate,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,Ui.dp(this,430)));

@@ -37,11 +37,19 @@ public sealed class MemberPushEntity
 
     public required string Title { get; set; }
 
+    public string Message { get; set; } = string.Empty;
+
     public string MinimumMembershipLevel { get; set; } = "member";
 
     public string ConfigurationSourcesJson { get; set; } = "[]";
 
     public string LiveSourcesJson { get; set; } = "[]";
+
+    public string? AndroidVersion { get; set; }
+
+    public string? AndroidDownloadUrl { get; set; }
+
+    public bool ForceAndroidUpdate { get; set; }
 
     public bool Enabled { get; set; }
 

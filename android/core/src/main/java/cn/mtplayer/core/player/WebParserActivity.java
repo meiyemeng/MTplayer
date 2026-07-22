@@ -36,7 +36,7 @@ public final class WebParserActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
-        settings.setUserAgentString(settings.getUserAgentString() + " MTPlayer/1.3.1");
+        settings.setUserAgentString(settings.getUserAgentString() + " MTPlayer/1.3.2");
         browser.setWebViewClient(new WebViewClient());
         browser.setWebChromeClient(new WebChromeClient() {
             @Override public void onShowCustomView(View view, CustomViewCallback callback) {

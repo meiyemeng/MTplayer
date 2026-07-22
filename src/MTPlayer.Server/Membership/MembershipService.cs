@@ -8,9 +8,13 @@ public sealed record MemberSource(string Name, string Address);
 public sealed record MemberPushView(
     Guid Id,
     string Title,
+    string Message,
     string MinimumMembershipLevel,
     IReadOnlyList<MemberSource> ConfigurationSources,
     IReadOnlyList<MemberSource> LiveSources,
+    string? AndroidVersion,
+    string? AndroidDownloadUrl,
+    bool ForceAndroidUpdate,
     bool Enabled,
     DateTimeOffset UpdatedAtUtc);
 public sealed record MemberPushUpdate(
@@ -18,7 +22,11 @@ public sealed record MemberPushUpdate(
     string MinimumMembershipLevel,
     IReadOnlyList<MemberSource>? ConfigurationSources,
     IReadOnlyList<MemberSource>? LiveSources,
-    bool Enabled);
+    bool Enabled,
+    string? Message = null,
+    string? AndroidVersion = null,
+    string? AndroidDownloadUrl = null,
+    bool ForceAndroidUpdate = false);
 public sealed record MembershipUpdate(string Level, DateTimeOffset? ExpiresAtUtc);
 
 public sealed class MembershipService(ApiDbContext db, TimeProvider timeProvider)
@@ -60,6 +68,15 @@ public sealed class MembershipService(ApiDbContext db, TimeProvider timeProvider
     {
         var title = update.Title?.Trim() ?? string.Empty;
         if (title.Length is 0 or > 200) throw new ArgumentException("推送标题长度必须为 1 到 200 个字符。");
+        var message = update.Message?.Trim() ?? string.Empty;
+        if (message.Length > 2_000) throw new ArgumentException("推送正文不能超过 2000 个字符。");
+        var androidVersion = string.IsNullOrWhiteSpace(update.AndroidVersion) ? null : update.AndroidVersion.Trim();
+        if (androidVersion?.Length > 64) throw new ArgumentException("Android 版本号不能超过 64 个字符。");
+        var androidDownloadUrl = string.IsNullOrWhiteSpace(update.AndroidDownloadUrl) ? null : update.AndroidDownloadUrl.Trim();
+        if (androidDownloadUrl is not null && (!Uri.TryCreate(androidDownloadUrl, UriKind.Absolute, out var updateUri) || updateUri.Scheme is not ("http" or "https")))
+            throw new ArgumentException("Android 更新地址必须是 HTTP 或 HTTPS 地址。");
+        if (update.ForceAndroidUpdate && (androidVersion is null || androidDownloadUrl is null))
+            throw new ArgumentException("强制更新需要同时填写 Android 版本号和下载地址。");
         var level = NormalizeLevel(update.MinimumMembershipLevel);
         var configurations = NormalizeSources(update.ConfigurationSources);
         var lives = NormalizeSources(update.LiveSources);
@@ -70,9 +87,13 @@ public sealed class MembershipService(ApiDbContext db, TimeProvider timeProvider
         if (id is not null && entity is null) throw new KeyNotFoundException("未找到推送配置。");
         entity ??= new MemberPushEntity { Id = Guid.NewGuid(), Title = title, CreatedAtUtc = now };
         entity.Title = title;
+        entity.Message = message;
         entity.MinimumMembershipLevel = level;
         entity.ConfigurationSourcesJson = JsonSerializer.Serialize(configurations);
         entity.LiveSourcesJson = JsonSerializer.Serialize(lives);
+        entity.AndroidVersion = androidVersion;
+        entity.AndroidDownloadUrl = androidDownloadUrl;
+        entity.ForceAndroidUpdate = update.ForceAndroidUpdate;
         entity.Enabled = update.Enabled;
         entity.UpdatedAtUtc = now;
         if (db.Entry(entity).State == EntityState.Detached) db.MemberPushes.Add(entity);
@@ -86,9 +107,13 @@ public sealed class MembershipService(ApiDbContext db, TimeProvider timeProvider
     private static MemberPushView ToView(MemberPushEntity value) => new(
         value.Id,
         value.Title,
+        value.Message,
         value.MinimumMembershipLevel,
         ParseSources(value.ConfigurationSourcesJson),
         ParseSources(value.LiveSourcesJson),
+        value.AndroidVersion,
+        value.AndroidDownloadUrl,
+        value.ForceAndroidUpdate,
         value.Enabled,
         value.UpdatedAtUtc);
 
