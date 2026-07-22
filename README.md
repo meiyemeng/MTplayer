@@ -7,8 +7,8 @@ MT播放器是一套不内置影视内容的多平台影视播放器与账户同
 | 平台 | 安装要求 | 主要能力 |
 | --- | --- | --- |
 | Windows | Windows 10 / 11，x64 或 x86 | WPF 原生桌面端、Spider/CMS 配置、多源搜索、海报墙、LibVLC 播放、直播、收藏/历史、登录同步 |
-| Android 手机 | Android 8.0+ | 触屏界面、CMS 配置源、多源搜索、详情/选集、Media3 播放、收藏/历史、登录同步 |
-| Android TV | Android TV 5.0+ | Leanback 启动、遥控器焦点导航、设备码登录、详情/选集、Media3 播放；APK 使用 v1+v2 双签名兼容旧电视 |
+| Android 手机 | Android 7.0+ | 基于 fish2018 260720-16 手机版的原界面与操作逻辑、完整 Spider/直播/播放能力、MT 账户与云端配置 |
+| Android TV | Android TV 7.0+ | 基于 fish2018 260720-16 电视版的原界面与遥控器逻辑、完整 Spider/直播/播放能力、MT 账户与云端配置 |
 | macOS | macOS 10.15+，Intel x64；Apple Silicon 可使用 Rosetta 2 | Avalonia 桌面界面、CMS 配置、多源搜索、详情/选集、LibVLC 播放、收藏/历史、登录同步 |
 | 网页 | Chrome、Edge、Safari、Firefox 的现代版本 | 多配置源、Top 片单、跨源搜索、详情/选集、HLS 播放、直播、收藏/历史、注册登录与双向同步 |
 
@@ -33,9 +33,8 @@ macOS 客户端当前读取标准 TVBox `type=1` / CMS API。Python Spider、仅
 
 - `src/WebHtv.Desktop`：Windows WPF 客户端
 - `src/MTPlayer.Mac`：macOS Avalonia 客户端
-- `android/mobile`：Android 手机客户端
-- `android/tv`：Android TV 客户端
-- `android/core`：Android 共用配置、CMS、搜索与账户逻辑
+- `android-fish2018`：当前 Android 手机与电视客户端，基于 fish2018 260720-16 完整源码，仅增加 MT 品牌、账户、云端配置、会员资源与 GitHub 在线更新
+- `android`：早期自研 Android 客户端，保留作历史兼容，不再作为当前发布源
 - `src/MTPlayer.Server`：账户、设备码、同步、网页客户端与管理后台
 - `deploy/synology`：群晖 Docker Compose、备份与恢复脚本
 - `installer`：Windows Inno Setup 安装脚本和免责声明
@@ -52,20 +51,14 @@ dotnet test .\tests\MTPlayer.Server.Tests\MTPlayer.Server.Tests.csproj -c Releas
 
 ### Android
 
-安装 JDK 17+ 与 Android SDK 35，复制 `android/local.properties.example` 为 `android/local.properties`。正式 Release 还需复制 `android/keystore.properties.example`，填写自己的私有签名密钥；私钥和密码不会提交到仓库。
+安装 JDK 21 与 Android SDK 37，在 `android-fish2018/local.properties` 中配置 `sdk.dir`。正式 Release 同时配置 `storeFile`、`keyAlias`、`storePassword` 和 `keyPassword`；私钥与密码不会提交到仓库。
 
 ```powershell
-cd android
-.\gradlew.bat :core:test :mobile:assembleDebug :tv:assembleDebug
+cd android-fish2018
+.\gradlew.bat :app:assembleLeanbackArm64_v8aRelease :app:assembleLeanbackArmeabi_v7aRelease :app:assembleMobileArm64_v8aRelease :app:assembleMobileArmeabi_v7aRelease
 ```
 
-在 Android 手机或电视设置页开启 Spider Gateway 后，记下显示的端口和令牌。Windows 直接填写 `http://安卓设备局域网IP:9978`；群晖网页端在 `.env` 中填写 `SPIDER_GATEWAY_URL` 和 `SPIDER_GATEWAY_TOKEN`。网关默认关闭，只监听局域网并强制令牌认证；请勿直接暴露到公网。
-
-如果电视上已有签名不同但包名相同的旧版，可构建独立包名的共存版，避免卸载旧应用：
-
-```powershell
-.\gradlew.bat :tv:assembleRelease -PtvApplicationId=cn.mtplayer.tv.compat -PtvAppLabel="MT播放器"
-```
+`.github/workflows/release-android-fish2018.yml` 会用同一发布证书构建四个 APK、发布到 GitHub Release，并更新 `updates/android` 清单。首次从上游 fish2018 APK 切换到 MT播放器时，因为上游私钥不可取得，需要先卸载上游包；此后的 MT播放器版本可直接在线覆盖更新。
 
 ### macOS
 

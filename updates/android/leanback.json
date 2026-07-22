@@ -1,0 +1,17 @@
+{
+  "name": "1.3.4",
+  "code": 26072301,
+  "desc": "基于 TVBox fish2018 260720-16：保留原版电视界面与操作逻辑；加入 MT播放器品牌、账号云端上传下载、会员资源推送和 GitHub 在线更新。",
+  "urls": {
+    "arm64_v8a": "https://github.com/meiyemeng/MTplayer/releases/latest/download/MTPlayer-Android-leanback-arm64_v8a.apk",
+    "armeabi_v7a": "https://github.com/meiyemeng/MTplayer/releases/latest/download/MTPlayer-Android-leanback-armeabi_v7a.apk"
+  },
+  "sizes": {
+    "arm64_v8a": 117205396,
+    "armeabi_v7a": 102456470
+  },
+  "sha256s": {
+    "arm64_v8a": "66CA05FA834924890106E5EDBED22D3154BB03730226BD90F665728BB0B68C88",
+    "armeabi_v7a": "FFE57F52A1E481935081D36C9A8ADF39546B66931832DB9D4CC61CFF24BE4978"
+  }
+}

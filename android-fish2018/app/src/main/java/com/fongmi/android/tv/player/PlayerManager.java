@@ -1,0 +1,2372 @@
+package com.fongmi.android.tv.player;
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.media.AudioManager;
+import android.net.Uri;
+import android.os.Build;
+import android.os.SystemClock;
+import android.text.TextUtils;
+
+import androidx.annotation.NonNull;
+import androidx.media3.common.C;
+import androidx.media3.common.Effect;
+import androidx.media3.common.Format;
+import androidx.media3.common.MediaEdition;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.MediaMetadata;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.Player;
+import androidx.media3.common.Tracks;
+import androidx.media3.common.VideoSize;
+import androidx.media3.effect.ColorLut;
+import androidx.media3.ui.danmaku.DanmakuConfig;
+import androidx.media3.ui.danmaku.DanmakuController;
+import androidx.media3.mpvplayer.MpvPlayer;
+
+import com.fongmi.android.tv.App;
+import com.fongmi.android.tv.Constant;
+import com.fongmi.android.tv.R;
+import com.fongmi.android.tv.api.SiteApi;
+import com.fongmi.android.tv.bean.Danmaku;
+import com.fongmi.android.tv.bean.Result;
+import com.fongmi.android.tv.bean.Sub;
+import com.fongmi.android.tv.bean.Track;
+import com.fongmi.android.tv.impl.ParseCallback;
+import com.fongmi.android.tv.player.engine.ExoPlayerEngine;
+import com.fongmi.android.tv.player.engine.IjkPlayerEngine;
+import com.fongmi.android.tv.player.engine.MpvPlayerEngine;
+import com.fongmi.android.tv.player.engine.PlaySpec;
+import com.fongmi.android.tv.player.engine.PlayerCacheState;
+import com.fongmi.android.tv.player.engine.PlayerEngine;
+import com.fongmi.android.tv.player.danmaku.DanmakuUrlPolicy;
+import com.fongmi.android.tv.player.danmaku.LiveDanmakuBatcher;
+import com.fongmi.android.tv.player.danmaku.LiveDanmakuBuffer;
+import com.fongmi.android.tv.player.danmaku.LiveDanmakuMessage;
+import com.fongmi.android.tv.player.danmaku.LiveDanmakuMetrics;
+import com.fongmi.android.tv.player.danmaku.LiveDanmakuParser;
+import com.fongmi.android.tv.player.danmaku.LiveDanmakuWebSocketSession;
+import com.fongmi.android.tv.player.lut.DynamicLutEffect;
+import com.fongmi.android.tv.player.lut.LutEffectFactory;
+import com.fongmi.android.tv.player.lut.LutEligibility;
+import com.fongmi.android.tv.player.lut.LutPreset;
+import com.fongmi.android.tv.player.lut.LutSetting;
+import com.fongmi.android.tv.player.lut.LutStore;
+import com.fongmi.android.tv.player.lut.MpvLutShader;
+import com.fongmi.android.tv.player.lut.MpvLutShaderFactory;
+import com.fongmi.android.tv.player.mpv.MpvAutoOutputPolicy;
+import com.fongmi.android.tv.player.mpv.MpvConfigStore;
+import com.fongmi.android.tv.setting.DanmakuSetting;
+import com.fongmi.android.tv.setting.MpvPerformanceSetting;
+import com.fongmi.android.tv.setting.PlayerSetting;
+import com.fongmi.android.tv.utils.LocalProxyDebug;
+import com.fongmi.android.tv.utils.Notify;
+import com.fongmi.android.tv.utils.ResUtil;
+import com.fongmi.android.tv.utils.Task;
+import com.fongmi.android.tv.utils.Util;
+import com.github.catvod.crawler.SpiderDebug;
+import com.github.catvod.net.OkHttp;
+import com.google.common.net.HttpHeaders;
+
+import java.io.IOException;
+import java.text.DecimalFormat;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+public class PlayerManager implements ParseCallback {
+
+    public static final String RELOAD_LUT_WARMUP = "__webhtv_lut_warmup_reload__";
+
+    private static final long LOCAL_PROXY_READY_TIMEOUT_MS = 5000;
+    private static final long LOCAL_PROXY_RETRY_DELAY_MS = 1000;
+    private static final long HARD_DECODE_SWITCH_RETRY_DELAY_MS = 1200;
+    private static final long MPV_AUTO_OUTPUT_PROBE_INTERVAL_MS = 250;
+    private static final int LOCAL_PROXY_MAX_RETRY = 2;
+    private static final int MPV_AUTO_OUTPUT_PROBE_MAX_ATTEMPTS = 20;
+    private static final int LUT_WARMUP_RECOVERED_ERROR_REFRESH_THRESHOLD = 3;
+    private static final long DANMAKU_FORCE_RELOAD_DEBOUNCE_MS = 10000;
+    private static final long LIVE_DANMAKU_METRICS_INTERVAL_MS = 15000L;
+    private static final float[] SPEED_PRESETS = new float[]{0.5f, 0.75f, 1f, 1.2f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 5f};
+    private static final DecimalFormat SPEED_FORMAT = new DecimalFormat("0.##x");
+
+    private final Runnable runnable;
+    private final Runnable liveDanmakuMetricsRunnable;
+    private final Callback callback;
+    private final DynamicLutEffect dynamicLutEffect;
+    private final AudioManager.OnAudioFocusChangeListener audioFocusChangeListener;
+    private final BroadcastReceiver noisyReceiver;
+    private final PlaybackBufferingTracker playbackBufferingTracker;
+    private final PlaybackTrace playbackTrace;
+    private final LiveDanmakuBatcher liveDanmakuBatcher;
+    private final LiveDanmakuBuffer liveDanmakuBuffer;
+    private final LiveDanmakuMetrics liveDanmakuMetrics;
+    private DanmakuController danmakuController;
+    private LiveDanmakuWebSocketSession liveDanmakuSession;
+    private PlayerEngine engine;
+    private VideoSize videoSize;
+    private ParseJob parseJob;
+    private PlaySpec spec;
+    private Player player;
+    private String currentDanmakuUrl;
+    private String currentDanmakuKey;
+    private String loadingDanmakuKey;
+    private String lastLoggedRouteTraceId = PlaybackTrace.NONE;
+    private long danmakuLoadStartedAtMs;
+    private volatile long liveDanmakuGeneration;
+    private volatile boolean liveDanmakuPlaybackActive;
+    private long pendingSwitchPositionMs = C.TIME_UNSET;
+    private float pendingSwitchSpeed = 1f;
+    private boolean danmakuLoadInProgress;
+    private boolean danmakuForeground = true;
+    private boolean pendingSwitchRepeat;
+    private boolean pendingSwitchRestore;
+    private boolean audioFocusHeld;
+    private boolean noisyReceiverRegistered;
+    private boolean resumeOnAudioFocusGain;
+    private Object audioFocusRequest;
+
+    private boolean initTrack;
+    private boolean videoEffectsActive;
+    private boolean videoEffectsDirty;
+    private boolean lutAppliedForItem;
+    private boolean lutApplyInProgress;
+    private boolean lutPipelineReadyForItem;
+    private boolean lutPipelinePrepareInProgress;
+    private boolean pendingLutPreview;
+    private boolean waitingLutBeforePlay;
+    private boolean playWhenReady = true;
+    private boolean lutWarmupRecoveryActive;
+    private boolean lutWarmupRefreshRequested;
+    private boolean lutWarmupReloadPreviewPending;
+    private boolean hardDecodeSwitchRetryArmed;
+    private boolean lutAllowed = true;
+    private boolean mpvAutoOutputEvaluated;
+    private boolean mpvAutoOutputEvaluationScheduled;
+    private boolean mpvExplicitSubtitlePreference;
+    private boolean mpvSurfaceFallbackTried;
+    private int playerType;
+    private int retry;
+    private int localProxyRetry;
+    private int prepareSeq;
+    private int lutApplySeq;
+    private int lutWarmupRecoveredErrors;
+    private int mpvOutputEvaluationSeq;
+    private int mpvAutoOutputProbeAttempts;
+
+    public PlayerManager(Callback callback) {
+        this.runnable = this::onPlaybackTimeout;
+        this.liveDanmakuMetricsRunnable = () -> logLiveDanmakuMetrics("periodic", true);
+        this.playbackBufferingTracker = new PlaybackBufferingTracker();
+        this.playbackTrace = new PlaybackTrace();
+        this.liveDanmakuBuffer = new LiveDanmakuBuffer();
+        this.liveDanmakuMetrics = new LiveDanmakuMetrics();
+        this.liveDanmakuBatcher = new LiveDanmakuBatcher(liveDanmakuBuffer, this::onLiveDanmakuBatch);
+        this.dynamicLutEffect = new DynamicLutEffect();
+        this.audioFocusChangeListener = this::onNativeAudioFocusChanged;
+        this.noisyReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (intent == null || !AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(intent.getAction())) return;
+                onNativeAudioBecomingNoisy();
+            }
+        };
+        this.playerType = PlayerSetting.getPlayer();
+        this.engine = buildEngine(playerType, PlayerEngine.HARD);
+        this.player = engine.getPlayer();
+        this.callback = callback;
+    }
+
+    public void release() {
+        prepareSeq++;
+        lutApplySeq++;
+        player.removeListener(listener);
+        App.removeCallbacks(runnable);
+        stopNativeAudioSession();
+        clearDanmaku("release");
+        releaseLiveDanmakuSession();
+        liveDanmakuBatcher.release();
+        App.removeCallbacks(liveDanmakuMetricsRunnable);
+        if (danmakuController != null) danmakuController.setListener(null);
+        danmakuController = null;
+        if (engine == null) return;
+        engine.release();
+        engine = null;
+        player = null;
+        videoEffectsActive = false;
+        videoEffectsDirty = false;
+        lutAppliedForItem = false;
+        lutApplyInProgress = false;
+        lutPipelineReadyForItem = false;
+        lutPipelinePrepareInProgress = false;
+        pendingLutPreview = false;
+        waitingLutBeforePlay = false;
+        lutWarmupReloadPreviewPending = false;
+        clearLutWarmupRecovery();
+        playbackBufferingTracker.reset();
+        playbackTrace.clear();
+        lastLoggedRouteTraceId = PlaybackTrace.NONE;
+    }
+
+    private void onPlaybackTimeout() {
+        if (retryLutWarmupByRefresh("timeout")) return;
+        callback.onError(ResUtil.getString(R.string.error_play_timeout));
+    }
+
+    private void resetLutRuntimeState(String reason, boolean clearEngineEffects) {
+        lutApplySeq++;
+        if (clearEngineEffects && engine != null && engine.supportsNativeLut()) {
+            safeSetNativeLut(null, reason + "_reset");
+        } else if (clearEngineEffects && engine != null && videoEffectsActive) {
+            try {
+                engine.setVideoEffects(Collections.emptyList());
+                if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "clear effects before reset reason=%s", reason);
+            } catch (Throwable e) {
+                if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "clear effects before reset failed reason=%s error=%s", reason, causeChain(e));
+            }
+        }
+        dynamicLutEffect.clear();
+        videoEffectsActive = false;
+        videoEffectsDirty = false;
+        lutAppliedForItem = false;
+        lutApplyInProgress = false;
+        lutPipelineReadyForItem = false;
+        lutPipelinePrepareInProgress = false;
+        pendingLutPreview = false;
+        waitingLutBeforePlay = false;
+        lutWarmupReloadPreviewPending = false;
+        clearLutWarmupRecovery();
+    }
+
+    public Player getPlayer() {
+        return player;
+    }
+
+    public Tracks getCurrentTracks() {
+        return engine.getCurrentTracks();
+    }
+
+    public List<MediaEdition> getCurrentMediaEditions() {
+        return engine.getCurrentMediaEditions();
+    }
+
+    public MediaItem getCurrentMediaItem() {
+        return player.getCurrentMediaItem();
+    }
+
+    public String getPlaybackTraceId() {
+        return playbackTrace.current();
+    }
+
+    public int getPlaybackState() {
+        return player.getPlaybackState();
+    }
+
+    public boolean isPlaying() {
+        return player.isPlaying();
+    }
+
+    public boolean isReleased() {
+        return player == null;
+    }
+
+    public String getUrl() {
+        return spec != null ? spec.getUrl() : null;
+    }
+
+    public String getKey() {
+        return spec != null ? spec.getKey() : null;
+    }
+
+    public List<Danmaku> getDanmakus() {
+        return spec != null ? spec.getDanmakus() : null;
+    }
+
+    public MediaMetadata getMetadata() {
+        return spec != null ? spec.getMetadata() : null;
+    }
+
+    public Map<String, String> getHeaders() {
+        return spec == null || spec.getHeaders() == null ? new HashMap<>() : spec.getHeaders();
+    }
+
+    public float getSpeed() {
+        return player.getPlaybackParameters().speed;
+    }
+
+    public boolean isEmpty() {
+        return spec == null || TextUtils.isEmpty(spec.getUrl());
+    }
+
+    public boolean isPortrait() {
+        return getVideoHeight() > getVideoWidth();
+    }
+
+    public boolean isLandscape() {
+        return getVideoWidth() > getVideoHeight();
+    }
+
+    public boolean isLive() {
+        return engine.isLive();
+    }
+
+    public boolean isVod() {
+        return engine.isVod();
+    }
+
+    public boolean haveTrack(int type) {
+        return engine.haveTrack(type);
+    }
+
+    public boolean haveTitle() {
+        return engine.haveTitle();
+    }
+
+    public boolean haveDanmaku() {
+        return getDanmakus() != null && getDanmakus().stream().anyMatch(Danmaku::isSelected);
+    }
+
+    public boolean canSetOpening(long position, long duration) {
+        return position > 0 && duration > 0 && position <= Constant.getOpEdLimit(duration);
+    }
+
+    public boolean canSetEnding(long position, long duration) {
+        return position > 0 && duration > 0 && duration - position <= Constant.getOpEdLimit(duration);
+    }
+
+    public int getVideoWidth() {
+        return videoSize == null ? 0 : videoSize.width;
+    }
+
+    public int getVideoHeight() {
+        return videoSize == null ? 0 : videoSize.height;
+    }
+
+    public long getPosition() {
+        return player.getCurrentPosition();
+    }
+
+    public long getBufferedDuration() {
+        return Math.max(0, player.getBufferedPosition() - getPosition());
+    }
+
+    public int getBufferedPercentage() {
+        return player.getBufferedPercentage();
+    }
+
+    public boolean isLoading() {
+        return player.isLoading();
+    }
+
+    public String getSizeText() {
+        int width = getVideoWidth();
+        int height = getVideoHeight();
+        if (width <= 0 || height <= 0) {
+            Format format = getVideoFormat();
+            if (format != null) {
+                if (width <= 0) width = format.width;
+                if (height <= 0) height = format.height;
+            }
+        }
+        return width <= 0 || height <= 0 ? "" : width + " x " + height;
+    }
+
+    public Format getVideoFormat() {
+        return engine.getVideoFormat();
+    }
+
+    public PlayerCacheState getCacheState() {
+        return engine == null ? PlayerCacheState.empty() : engine.getCacheState();
+    }
+
+    public String getRenderDiagnostics() {
+        return engine == null ? "" : engine.getRenderDiagnostics();
+    }
+
+    public String getRuntimeDiagnostics() {
+        return engine == null ? "" : engine.getRuntimeDiagnostics();
+    }
+
+    public long getDroppedFrames() {
+        return engine == null ? 0 : engine.getDroppedFrames();
+    }
+
+    public int getRebufferCount() {
+        return playbackBufferingTracker.getRebufferCount();
+    }
+
+    public long getRebufferTotalMs() {
+        return playbackBufferingTracker.getRebufferTotalMs();
+    }
+
+    public boolean supportsSubtitleStyle() {
+        return engine != null && engine.supportsSubtitleStyle();
+    }
+
+    public boolean supportsSecondarySubtitle() {
+        return engine != null && engine.supportsSecondarySubtitle();
+    }
+
+    public boolean isSecondarySubtitleSelected(Format format) {
+        return engine != null && engine.isSecondarySubtitleSelected(format);
+    }
+
+    public String getAudioPassThroughText() {
+        if (!PlayerSetting.isAudioPassThrough()) return "关";
+        if (!isMpv()) return "开";
+        String codecs = engine == null ? "" : engine.getAudioSpdifCodecs();
+        return TextUtils.isEmpty(codecs) ? "开/PCM" : "开/" + codecs;
+    }
+
+    public void setSubtitleStyle(float textSize, float position) {
+        if (engine != null) engine.setSubtitleStyle(textSize, position);
+    }
+
+    public String getSpeedText() {
+        return SPEED_FORMAT.format(getSpeed());
+    }
+
+    public String getDecodeText() {
+        return engine.getDecodeText();
+    }
+
+    public boolean isHardDecode() {
+        return engine.isHard();
+    }
+
+    public String getPlayerText() {
+        return ResUtil.getStringArray(R.array.select_player_kernel)[playerType];
+    }
+
+    public int getPlayerType() {
+        return playerType;
+    }
+
+    public String getLutText() {
+        return LutSetting.getButtonText();
+    }
+
+    public void setLutAllowed(boolean allowed) {
+        if (lutAllowed == allowed) return;
+        lutAllowed = allowed;
+        if (!allowed) resetLutRuntimeState("lut_disallowed", true);
+    }
+
+    public String getLutUnavailableReason() {
+        return LutEligibility.getUnavailableReason(engine, spec);
+    }
+
+    public boolean isIjk() {
+        return playerType == PlayerSetting.IJK;
+    }
+
+    public boolean isMpv() {
+        return playerType == PlayerSetting.MPV;
+    }
+
+    public boolean isMpvSurfaceDirect() {
+        return engine instanceof MpvPlayerEngine mpv && mpv.isSurfaceDirect();
+    }
+
+    public boolean isExo() {
+        return playerType == PlayerSetting.EXO;
+    }
+
+    public boolean isNativePlayer() {
+        return !isExo();
+    }
+
+    public String getPositionTime(long delta) {
+        long time = Math.max(0, Math.min(getPosition() + delta, Math.max(0, getDuration())));
+        return Util.timeMs(time);
+    }
+
+    public long getDuration() {
+        return player.getDuration();
+    }
+
+    public String getDurationTime() {
+        return Util.timeMs(Math.max(0, getDuration()));
+    }
+
+    public void setSub(Sub sub) {
+        if (spec != null) spec.setSub(sub);
+        setMediaItem();
+    }
+
+    public void setFormat(String format) {
+        if (spec != null) spec.setFormat(format);
+        setMediaItem();
+    }
+
+    public void setTitle(MediaEdition edition) {
+        if (edition == null) return;
+        if (isMpv() && engine.selectEdition(edition)) return;
+        if (spec != null) spec.setUrl(spec.getUri().buildUpon().fragment("edition=" + edition.index).build().toString());
+        if (engine.selectEdition(edition)) return;
+        setMediaItem();
+        seekTo(0);
+    }
+
+    public static MediaMetadata buildMetadata(String title, String artist, String artUri) {
+        Uri artwork = TextUtils.isEmpty(artUri) ? null : Uri.parse(artUri);
+        return new MediaMetadata.Builder().setTitle(title).setArtist(artist).setArtworkUri(artwork).build();
+    }
+
+    public void setMetadata(MediaMetadata data) {
+        if (spec != null) spec.setMetadata(data);
+        engine.setMetadata(data);
+    }
+
+    public void setDanmakuController(DanmakuController controller) {
+        if (danmakuController == controller) {
+            configureDanmakuController(controller);
+            return;
+        }
+        if (danmakuController != null) {
+            danmakuController.setListener(null);
+            danmakuController.clearItems();
+        }
+        danmakuController = controller;
+        if (danmakuController == null) return;
+        configureDanmakuController(danmakuController);
+        restoreDanmakuDataSource();
+    }
+
+    private void configureDanmakuController(DanmakuController controller) {
+        if (controller == null) return;
+        controller.setOkHttpClient(OkHttp.player());
+        controller.setConfig(DanmakuSetting.getConfig());
+        controller.setEnabled(DanmakuSetting.isShow());
+        controller.setListener(new DanmakuController.Listener() {
+            @Override
+            public void onLoadCompleted(Uri uri, int count) {
+                logDanmakuLoad("completed", uri, count, null);
+                finishDanmakuLoad(uri);
+            }
+
+            @Override
+            public void onLoadError(Uri uri, IOException error) {
+                logDanmakuLoad("error", uri, -1, error);
+                finishDanmakuLoad(uri);
+            }
+        });
+    }
+
+    private void restoreDanmakuDataSource() {
+        if (danmakuController == null || TextUtils.isEmpty(currentDanmakuUrl)) return;
+        if (!DanmakuUrlPolicy.classify(currentDanmakuUrl).isStatic()) return;
+        loadingDanmakuKey = currentDanmakuKey;
+        danmakuLoadStartedAtMs = SystemClock.elapsedRealtime();
+        danmakuLoadInProgress = true;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "restore controller %s key=%s", DanmakuUrlPolicy.logSummary(currentDanmakuUrl), summarizeUrl(currentDanmakuKey));
+        danmakuController.setDataSource(Uri.parse(currentDanmakuUrl));
+    }
+
+    public void setDanmakuConfig(DanmakuConfig config) {
+        if (danmakuController != null) danmakuController.setConfig(config);
+    }
+
+    public void setDanmakuEnabled(boolean enabled) {
+        if (danmakuController != null) danmakuController.setEnabled(enabled);
+        if (!enabled) {
+            stopLiveDanmakuSession("hidden");
+        } else if (danmakuForeground && DanmakuUrlPolicy.classify(currentDanmakuUrl).isLive()) {
+            connectLiveDanmakuSession(currentDanmakuUrl);
+        }
+    }
+
+    public void setDanmakuForeground(boolean foreground) {
+        if (danmakuForeground == foreground) return;
+        danmakuForeground = foreground;
+        if (!foreground) {
+            stopLiveDanmakuSession("background");
+            discardLiveDanmakuPending();
+        } else if (DanmakuSetting.isShow() && DanmakuUrlPolicy.classify(currentDanmakuUrl).isLive()) {
+            connectLiveDanmakuSession(currentDanmakuUrl);
+        }
+    }
+
+    public void sendDanmaku(String text) {
+        if (danmakuController != null) danmakuController.sendNow(text);
+    }
+
+    public String setSpeed(float speed) {
+        if (!player.isCommandAvailable(Player.COMMAND_SET_SPEED_AND_PITCH)) return getSpeedText();
+        player.setPlaybackParameters(player.getPlaybackParameters().withSpeed(speed));
+        return getSpeedText();
+    }
+
+    public String addSpeed() {
+        return setSpeed(nextPresetSpeed());
+    }
+
+    public String addSpeed(float value) {
+        return setSpeed(Math.min(getSpeed() + value, 5));
+    }
+
+    public String subSpeed(float value) {
+        return setSpeed(Math.max(getSpeed() - value, 0.25f));
+    }
+
+    public String toggleSpeed() {
+        return setSpeed(getSpeed() == 1 ? PlayerSetting.getSpeed() : 1);
+    }
+
+    private float nextPresetSpeed() {
+        float speed = getSpeed();
+        for (float preset : SPEED_PRESETS) if (speed < preset - 0.01f) return preset;
+        return SPEED_PRESETS[0];
+    }
+
+    public void setTrack(List<Track> tracks) {
+        mpvExplicitSubtitlePreference = hasRequestedSubtitle(tracks);
+        if (shouldLeaveAutoSurfaceDirectForSubtitle(tracks)) {
+            rebuildAndRestartMpv(false, "subtitle-selected");
+            return;
+        }
+        if (!tracks.isEmpty()) engine.setTrack(tracks);
+    }
+
+    public void setSecondarySubtitleTrack(Track track) {
+        if (engine != null) engine.setSecondarySubtitleTrack(track);
+    }
+
+    public void play() {
+        startNativeAudioSession(true);
+        player.play();
+    }
+
+    public void pause() {
+        player.pause();
+        stopNativeAudioSession();
+    }
+
+    public void stop() {
+        stopNativeAudioSession();
+        clearDanmaku("stop");
+        engine.stop();
+        stopParse();
+    }
+
+    public void clearMediaItems() {
+        stopNativeAudioSession();
+        clearDanmaku("clear_media_items");
+        player.clearMediaItems();
+    }
+
+    public boolean isRepeatOne() {
+        return engine.isRepeatOne();
+    }
+
+    public void setRepeatOne(boolean repeat) {
+        engine.setRepeatOne(repeat);
+    }
+
+    public void seekTo(long time) {
+        player.seekTo(time);
+    }
+
+    public long getTextOffsetMs() {
+        if (player.isCommandAvailable(Player.COMMAND_GET_TEXT_OFFSET)) return player.getTextOffsetMs();
+        return 0;
+    }
+
+    public void setTextOffsetMs(long offsetMs) {
+        if (player.isCommandAvailable(Player.COMMAND_SET_TEXT_OFFSET)) player.setTextOffsetMs(offsetMs);
+    }
+
+    public long getAudioOffsetMs() {
+        if (player.isCommandAvailable(Player.COMMAND_GET_AUDIO_OFFSET)) return player.getAudioOffsetMs();
+        return 0;
+    }
+
+    public void setAudioOffsetMs(long offsetMs) {
+        if (player.isCommandAvailable(Player.COMMAND_SET_AUDIO_OFFSET)) player.setAudioOffsetMs(offsetMs);
+    }
+
+    public void reset() {
+        App.removeCallbacks(runnable);
+        retry = 0;
+        localProxyRetry = 0;
+        hardDecodeSwitchRetryArmed = false;
+        clearPendingSwitchRestore();
+    }
+
+    public void clear() {
+        prepareSeq++;
+        lutApplySeq++;
+        resetMpvOutputRuntime();
+        spec = null;
+        clearPendingSwitchRestore();
+        clearDanmaku("clear");
+        lutAppliedForItem = false;
+        lutApplyInProgress = false;
+        lutPipelineReadyForItem = false;
+        lutPipelinePrepareInProgress = false;
+        pendingLutPreview = false;
+        waitingLutBeforePlay = false;
+        clearLutWarmupRecovery();
+        playbackBufferingTracker.reset();
+        playbackTrace.clear();
+        lastLoggedRouteTraceId = PlaybackTrace.NONE;
+    }
+
+    public void resetTrack() {
+        engine.resetTrack();
+    }
+
+    public void restoreVideoTrack() {
+        if (engine != null) engine.restoreVideoTrack();
+    }
+
+    public void toggleDecode() {
+        int next = engine.isHard() ? PlayerEngine.SOFT : PlayerEngine.HARD;
+        boolean resetVideoSurface = playerType == PlayerSetting.EXO && next == PlayerEngine.HARD;
+        hardDecodeSwitchRetryArmed = next == PlayerEngine.HARD;
+        beginPlaybackTrace("switch-decode");
+        engine.setDecode(next);
+        rebuildPlayer(resetVideoSurface);
+        setMediaItem();
+    }
+
+    public void switchDecode(PlaySpec freshSpec, long position, float speed, boolean repeat) {
+        if (engine == null || player == null || freshSpec == null) return;
+        beginPlaybackTrace("switch-decode-fresh");
+        int next = engine.isHard() ? PlayerEngine.SOFT : PlayerEngine.HARD;
+        boolean resetVideoSurface = playerType == PlayerSetting.EXO && next == PlayerEngine.HARD;
+        boolean wasPlayWhenReady = player.getPlayWhenReady();
+        prepareSeq++;
+        resetLutRuntimeState("switch_decode_fresh", true);
+        stopNativeAudioSession();
+        engine.release();
+        spec = freshSpec;
+        bindPlaybackTrace();
+        hardDecodeSwitchRetryArmed = next == PlayerEngine.HARD;
+        engine = buildEngine(playerType, next);
+        player = engine.getPlayer();
+        playWhenReady = wasPlayWhenReady;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch decode fresh decode=%d position=%d spec=%s", next, position, debugSpec());
+        callback.onPlayerRebuild(player, resetVideoSurface);
+        setMediaItem(Constant.TIMEOUT_PLAY);
+        if (position > 0) seekTo(position);
+        if (speed != 1f) setSpeed(speed);
+        setRepeatOne(repeat);
+    }
+
+    public void switchDecode(Result result, String key, MediaMetadata metadata, boolean useParse, long position, float speed, boolean repeat) {
+        if (engine == null || player == null || result == null || result.hasMsg() || result.getRealUrl().isEmpty()) return;
+        beginPlaybackTrace("switch-decode-result");
+        int next = engine.isHard() ? PlayerEngine.SOFT : PlayerEngine.HARD;
+        boolean resetVideoSurface = playerType == PlayerSetting.EXO && next == PlayerEngine.HARD;
+        boolean wasPlayWhenReady = player.getPlayWhenReady();
+        prepareSeq++;
+        resetLutRuntimeState("switch_decode_result", true);
+        stopNativeAudioSession();
+        stopParse();
+        engine.release();
+        hardDecodeSwitchRetryArmed = next == PlayerEngine.HARD;
+        engine = buildEngine(playerType, next);
+        player = engine.getPlayer();
+        playWhenReady = wasPlayWhenReady;
+        callback.onPlayerRebuild(player, resetVideoSurface);
+        if (result.needParse() || useParse) {
+            pendingSwitchRestore = true;
+            pendingSwitchPositionMs = position;
+            pendingSwitchSpeed = speed;
+            pendingSwitchRepeat = repeat;
+            spec = PlaySpec.fromParse(result, key, metadata, useParse);
+            bindPlaybackTrace();
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch decode fresh parse decode=%d position=%d useParse=%s spec=%s", next, position, useParse, debugSpec());
+            parseJob = ParseJob.create(this).start(result, useParse);
+        } else {
+            spec = PlaySpec.from(result, key, metadata);
+            bindPlaybackTrace();
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch decode fresh result decode=%d position=%d spec=%s", next, position, debugSpec());
+            setMediaItem(Constant.TIMEOUT_PLAY);
+            if (position > 0) seekTo(position);
+            if (speed != 1f) setSpeed(speed);
+            setRepeatOne(repeat);
+        }
+    }
+
+    public void togglePlayer() {
+        switchPlayer(PlayerSetting.nextPlayer(playerType));
+    }
+
+    public void switchPlayer(int type) {
+        switchPlayer(type, true);
+    }
+
+    public void switchPlayer(int type, PlaySpec freshSpec, long position, float speed, boolean repeat) {
+        if (engine == null || player == null || freshSpec == null) return;
+        beginPlaybackTrace("switch-player-fresh");
+        type = PlayerSetting.sanitizePlayer(type);
+        boolean wasPlayWhenReady = player.getPlayWhenReady();
+        int decode = engine.getDecode();
+        prepareSeq++;
+        resetLutRuntimeState("switch_player_fresh", true);
+        stopNativeAudioSession();
+        engine.release();
+        playerType = type;
+        PlayerSetting.putPlayer(type);
+        spec = freshSpec;
+        bindPlaybackTrace();
+        playWhenReady = wasPlayWhenReady;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player fresh type=%d position=%d spec=%s", type, position, debugSpec());
+        engine = buildEngine(playerType, decode);
+        player = engine.getPlayer();
+        callback.onPlayerRebuild(player, false);
+        setMediaItem(Constant.TIMEOUT_PLAY);
+        if (position > 0) seekTo(position);
+        if (speed != 1f) setSpeed(speed);
+        setRepeatOne(repeat);
+    }
+
+    public void switchPlayer(int type, Result result, String key, MediaMetadata metadata, boolean useParse, long position, float speed, boolean repeat) {
+        if (engine == null || player == null || result == null || result.hasMsg() || result.getRealUrl().isEmpty()) return;
+        beginPlaybackTrace("switch-player-result");
+        type = PlayerSetting.sanitizePlayer(type);
+        boolean wasPlayWhenReady = player.getPlayWhenReady();
+        int decode = engine.getDecode();
+        prepareSeq++;
+        resetLutRuntimeState("switch_player_result", true);
+        stopNativeAudioSession();
+        stopParse();
+        engine.release();
+        playerType = type;
+        PlayerSetting.putPlayer(type);
+        engine = buildEngine(playerType, decode);
+        player = engine.getPlayer();
+        playWhenReady = wasPlayWhenReady;
+        callback.onPlayerRebuild(player, false);
+        if (result.needParse() || useParse) {
+            pendingSwitchRestore = true;
+            pendingSwitchPositionMs = position;
+            pendingSwitchSpeed = speed;
+            pendingSwitchRepeat = repeat;
+            spec = PlaySpec.fromParse(result, key, metadata, useParse);
+            bindPlaybackTrace();
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player fresh parse type=%d position=%d useParse=%s spec=%s", type, position, useParse, debugSpec());
+            parseJob = ParseJob.create(this).start(result, useParse);
+        } else {
+            spec = PlaySpec.from(result, key, metadata);
+            bindPlaybackTrace();
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player fresh result type=%d position=%d spec=%s", type, position, debugSpec());
+            setMediaItem(Constant.TIMEOUT_PLAY);
+            if (position > 0) seekTo(position);
+            if (speed != 1f) setSpeed(speed);
+            setRepeatOne(repeat);
+        }
+    }
+
+    private void switchPlayer(int type, boolean persist) {
+        if (engine == null || player == null) return;
+        type = PlayerSetting.sanitizePlayer(type);
+        if (type == playerType) return;
+        beginPlaybackTrace("switch-player");
+        long position = getPosition();
+        float speed = getSpeed();
+        boolean repeat = isRepeatOne();
+        boolean wasPlayWhenReady = player.getPlayWhenReady();
+        int decode = engine.getDecode();
+        prepareSeq++;
+        resetLutRuntimeState("switch_player", true);
+        stopNativeAudioSession();
+        engine.release();
+        playerType = type;
+        if (persist) {
+            PlayerSetting.putPlayer(type);
+        }
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player type=%d persist=%s position=%d spec=%s", type, persist, position, debugSpec());
+        engine = buildEngine(playerType, decode);
+        player = engine.getPlayer();
+        callback.onPlayerRebuild(player, false);
+        if (spec == null || spec.getUrl() == null) return;
+        this.playWhenReady = wasPlayWhenReady;
+        if (reparseForPlayerSwitch(position, speed, repeat)) return;
+        setMediaItem(Constant.TIMEOUT_PLAY);
+        if (position > 0) seekTo(position);
+        if (speed != 1f) setSpeed(speed);
+        setRepeatOne(repeat);
+    }
+
+    private void rebuildPlayer() {
+        rebuildPlayer(false);
+    }
+
+    private void rebuildPlayer(boolean resetVideoSurface) {
+        stopNativeAudioSession();
+        player = engine.rebuild(listener);
+        videoEffectsActive = false;
+        videoEffectsDirty = false;
+        lutAppliedForItem = false;
+        lutApplyInProgress = false;
+        lutPipelineReadyForItem = false;
+        lutPipelinePrepareInProgress = false;
+        pendingLutPreview = false;
+        waitingLutBeforePlay = false;
+        callback.onPlayerRebuild(player, resetVideoSurface);
+    }
+
+    public void applyPerformanceSettings() {
+        if (!isMpv() || spec == null || TextUtils.isEmpty(spec.getUrl()) || !(engine instanceof MpvPlayerEngine mpv)) return;
+        resetMpvOutputEvaluationState();
+        mpv.setSurfaceDirectOverride(null);
+        rebuildAndRestartMpv(null, "performance-settings-changed");
+    }
+
+    private boolean rebuildAndRestartMpv(Boolean surfaceDirectOverride, String reason) {
+        if (!isMpv() || spec == null || TextUtils.isEmpty(spec.getUrl()) || !(engine instanceof MpvPlayerEngine mpv)) return false;
+        long position = Math.max(0, player.getCurrentPosition());
+        float speed = getSpeed();
+        boolean repeat = isRepeatOne();
+        boolean wasPlayWhenReady = player.getPlayWhenReady();
+        prepareSeq++;
+        App.removeCallbacks(runnable);
+        mpv.setSurfaceDirectOverride(surfaceDirectOverride);
+        videoSize = null;
+        initTrack = false;
+        rebuildPlayer();
+        playWhenReady = wasPlayWhenReady;
+        applySubtitleStyle();
+        playbackTrace.mark(PlaybackTrace.Stage.PREPARE, "player=" + playerType + " decode=" + engine.getDecode() + " mpv-output=" + reason);
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("mpv-output", "rebuild reason=%s directOverride=%s position=%d play=%s speed=%s repeat=%s spec=%s", reason, surfaceDirectOverride, position, wasPlayWhenReady, speed, repeat, debugSpec());
+        engine.start(spec.checkUa(), position, wasPlayWhenReady);
+        scheduleMpvAutoOutputEvaluation();
+        startNativeAudioSession(wasPlayWhenReady);
+        if (speed != 1f) setSpeed(speed);
+        setRepeatOne(repeat);
+        App.post(runnable, Constant.TIMEOUT_PLAY);
+        return true;
+    }
+
+    private void prepareMpvOutputForNewItem() {
+        resetMpvOutputEvaluationState();
+        mpvExplicitSubtitlePreference = hasRequestedSubtitle(Track.find(getKey()));
+        if (!(engine instanceof MpvPlayerEngine mpv)) return;
+        if (MpvPerformanceSetting.getOutputMode() == MpvPerformanceSetting.OUTPUT_AUTO && mpv.isSurfaceDirect()) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("mpv-output", "preserve direct output for new item reason=auto-sticky");
+            return;
+        }
+        mpv.setSurfaceDirectOverride(null);
+        boolean shouldStartDirect = MpvPerformanceSetting.shouldUseSurfaceDirect(false, Util.isLeanback(), engine.isHard());
+        if (mpv.isSurfaceDirect() == shouldStartDirect) return;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("mpv-output", "prepare new item rebuild currentDirect=%s desiredDirect=%s mode=%s", mpv.isSurfaceDirect(), shouldStartDirect, MpvPerformanceSetting.getOutputModeText());
+        rebuildPlayer();
+    }
+
+    private void resetMpvOutputRuntime() {
+        resetMpvOutputEvaluationState();
+        if (engine instanceof MpvPlayerEngine mpv) mpv.setSurfaceDirectOverride(null);
+    }
+
+    private void resetMpvOutputEvaluationState() {
+        mpvAutoOutputEvaluated = false;
+        mpvAutoOutputEvaluationScheduled = false;
+        mpvAutoOutputProbeAttempts = 0;
+        mpvSurfaceFallbackTried = false;
+        mpvOutputEvaluationSeq++;
+    }
+
+    private void scheduleMpvAutoOutputEvaluation() {
+        if (!isMpv() || MpvPerformanceSetting.getOutputMode() != MpvPerformanceSetting.OUTPUT_AUTO) return;
+        if (mpvAutoOutputEvaluated || mpvAutoOutputEvaluationScheduled) return;
+        mpvAutoOutputEvaluationScheduled = true;
+        int seq = ++mpvOutputEvaluationSeq;
+        App.post(() -> {
+            if (seq != mpvOutputEvaluationSeq) return;
+            mpvAutoOutputEvaluationScheduled = false;
+            mpvAutoOutputProbeAttempts++;
+            boolean evaluated = evaluateMpvAutoOutput();
+            if (!evaluated && !mpvAutoOutputEvaluated && mpvAutoOutputProbeAttempts < MPV_AUTO_OUTPUT_PROBE_MAX_ATTEMPTS) {
+                scheduleMpvAutoOutputEvaluation();
+            } else if (!evaluated && SpiderDebug.isEnabled()) {
+                SpiderDebug.log("mpv-output", "auto probe exhausted attempts=%d size=%dx%d tracksEmpty=%s", mpvAutoOutputProbeAttempts, getVideoWidth(), getVideoHeight(), engine == null || engine.getCurrentTracks() == null || engine.getCurrentTracks().isEmpty());
+            }
+        }, MPV_AUTO_OUTPUT_PROBE_INTERVAL_MS);
+    }
+
+    private boolean evaluateMpvAutoOutput() {
+        if (!isMpv() || mpvAutoOutputEvaluated || engine == null) return true;
+        Tracks tracks = engine.getCurrentTracks();
+        boolean tracksReady = tracks != null && !tracks.isEmpty();
+        Format format = tracksReady ? engine.getVideoFormat() : null;
+        VideoSize probedSize = engine instanceof MpvPlayerEngine mpv ? mpv.getVideoSizeSnapshot() : VideoSize.UNKNOWN;
+        int width = format != null && format.width > 0 ? format.width : probedSize.width > 0 ? probedSize.width : getVideoWidth();
+        int height = format != null && format.height > 0 ? format.height : probedSize.height > 0 ? probedSize.height : getVideoHeight();
+        if (width <= 0 || height <= 0) return false;
+        boolean externalSubtitleActive = spec != null && spec.getSubs() != null && !spec.getSubs().isEmpty();
+        boolean earlyEvaluation = !tracksReady;
+        if (earlyEvaluation && !MpvAutoOutputPolicy.canEvaluateWithoutTracks(width, height, externalSubtitleActive)) return false;
+        boolean subtitleActive = MpvAutoOutputPolicy.requiresGpuSubtitle(externalSubtitleActive, mpvExplicitSubtitlePreference);
+        boolean lutOrFilterActive = videoEffectsActive || videoEffectsDirty || lutAllowed && LutSetting.isEnabled() || MpvPerformanceSetting.isInterpolation();
+        boolean customGpuProcessing = MpvConfigStore.hasGpuVideoProcessing();
+        MpvAutoOutputPolicy.Decision decision = MpvAutoOutputPolicy.evaluate(width, height, engine.isHard(), Util.isLeanback(), subtitleActive, lutOrFilterActive, customGpuProcessing);
+        mpvAutoOutputEvaluated = true;
+        boolean currentlyDirect = isMpvSurfaceDirect();
+        MpvAutoOutputPolicy.Transition transition = MpvAutoOutputPolicy.transition(decision.eligible(), currentlyDirect);
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("mpv-output", "auto decision eligible=%s transition=%s reason=%s size=%dx%d tracksReady=%s early=%s subtitle=%s lutOrFilter=%s customGpu=%s direct=%s attempts=%d", decision.eligible(), transition, decision.reason(), width, height, tracksReady, earlyEvaluation, subtitleActive, lutOrFilterActive, customGpuProcessing, currentlyDirect, mpvAutoOutputProbeAttempts);
+        if (transition == MpvAutoOutputPolicy.Transition.ENTER_SURFACE_DIRECT) rebuildAndRestartMpv(true, "auto-" + decision.reason());
+        else if (transition == MpvAutoOutputPolicy.Transition.LEAVE_SURFACE_DIRECT) rebuildAndRestartMpv(false, "auto-" + decision.reason());
+        return true;
+    }
+
+    private boolean shouldLeaveAutoSurfaceDirectForSubtitle(List<Track> tracks) {
+        if (!isMpvSurfaceDirect() || MpvPerformanceSetting.getOutputMode() != MpvPerformanceSetting.OUTPUT_AUTO || tracks == null) return false;
+        for (Track track : tracks) {
+            if (track.getType() == C.TRACK_TYPE_TEXT && track.isSelected() && !track.isDisabled()) {
+                mpvAutoOutputEvaluated = true;
+                mpvOutputEvaluationSeq++;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasRequestedSubtitle(List<Track> tracks) {
+        if (tracks == null || tracks.isEmpty()) return false;
+        for (Track track : tracks) {
+            if (track.getType() == C.TRACK_TYPE_TEXT && track.isSelected() && !track.isDisabled()) return true;
+        }
+        return false;
+    }
+
+    private void restoreTrackSelection(List<Track> tracks) {
+        if (tracks != null && !tracks.isEmpty()) engine.setTrack(tracks);
+    }
+
+    private void onMpvVideoSizeProbed(Integer width, Integer height) {
+        if (width == null || height == null || width <= 0 || height <= 0) return;
+        if (!isMpv() || MpvPerformanceSetting.getOutputMode() != MpvPerformanceSetting.OUTPUT_AUTO || mpvAutoOutputEvaluated) return;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("mpv-output", "auto size probe size=%dx%d attempts=%d", width, height, mpvAutoOutputProbeAttempts);
+        mpvAutoOutputEvaluationScheduled = false;
+        mpvOutputEvaluationSeq++;
+        if (!evaluateMpvAutoOutput()) scheduleMpvAutoOutputEvaluation();
+    }
+
+    private boolean retryMpvSurfaceDirectFailure(PlaybackException error) {
+        if (!isMpvSurfaceDirect() || mpvSurfaceFallbackTried || error == null) return false;
+        String message = error.getMessage();
+        boolean outputFailure = error.errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED
+                || error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED
+                || error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
+                || message != null && (message.startsWith(MpvPlayer.ERROR_VIDEO_OUTPUT_FAILED) || message.startsWith(MpvPlayer.ERROR_DECODE_FAILED));
+        if (!outputFailure) return false;
+        mpvSurfaceFallbackTried = true;
+        mpvAutoOutputEvaluated = true;
+        mpvOutputEvaluationSeq++;
+        PlaybackTrace.log("mpv-output", playbackTrace.current(), "surface direct failed; fallback gpu once code=%d message=%s", error.errorCode, message);
+        return rebuildAndRestartMpv(false, "surface-direct-failure");
+    }
+
+    private PlayerEngine buildEngine(int type, int decode) {
+        return switch (type) {
+            case PlayerSetting.IJK -> new IjkPlayerEngine(decode, listener);
+            case PlayerSetting.MPV -> new MpvPlayerEngine(decode, listener, this::onMpvVideoSizeProbed);
+            default -> new ExoPlayerEngine(decode, listener);
+        };
+    }
+
+    public void browse(PlaySpec spec) {
+        reset();
+        clear();
+        stopParse();
+        start(spec, Constant.TIMEOUT_PLAY);
+    }
+
+    public void start(PlaySpec spec, long timeout) {
+        start(spec, timeout, true);
+    }
+
+    public void start(PlaySpec spec, long timeout, boolean playWhenReady) {
+        clearPendingSwitchRestore();
+        clearDanmaku("start");
+        this.spec = spec;
+        prepareMpvOutputForNewItem();
+        beginPlaybackTrace("start");
+        this.playWhenReady = playWhenReady;
+        retry = 0;
+        localProxyRetry = 0;
+        hardDecodeSwitchRetryArmed = false;
+        setMediaItem(timeout);
+    }
+
+    public void parse(String key, Result result, boolean useParse, MediaMetadata metadata) {
+        parse(key, result, useParse, metadata, true);
+    }
+
+    public void parse(String key, Result result, boolean useParse, MediaMetadata metadata, boolean playWhenReady) {
+        stopParse();
+        clearPendingSwitchRestore();
+        clearDanmaku("parse");
+        spec = PlaySpec.fromParse(result, key, metadata, useParse);
+        prepareMpvOutputForNewItem();
+        beginPlaybackTrace("parse");
+        this.playWhenReady = playWhenReady;
+        retry = 0;
+        localProxyRetry = 0;
+        hardDecodeSwitchRetryArmed = false;
+        parseJob = ParseJob.create(this).start(result, useParse);
+    }
+
+    private void stopParse() {
+        if (parseJob != null) parseJob.stop();
+        parseJob = null;
+    }
+
+    private boolean reparseForPlayerSwitch(long position, float speed, boolean repeat) {
+        if (spec == null || !spec.canReparse() || !spec.isParseSource()) return false;
+        Result result = spec.getParseResult();
+        boolean useParse = spec.isParseUseParse();
+        MediaMetadata metadata = spec.getMetadata();
+        String key = spec.getKey();
+        pendingSwitchRestore = true;
+        pendingSwitchPositionMs = position;
+        pendingSwitchSpeed = speed;
+        pendingSwitchRepeat = repeat;
+        stopParse();
+        if (spec.isParseSource()) {
+            spec = PlaySpec.fromParse(result, key, metadata, useParse);
+            bindPlaybackTrace();
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player reparse type=%d position=%d useParse=%s spec=%s", playerType, position, useParse, debugSpec());
+            parseJob = ParseJob.create(this).start(result, useParse);
+        } else {
+            refreshDirectForPlayerSwitch(result, key, metadata);
+        }
+        return true;
+    }
+
+    private void refreshDirectForPlayerSwitch(Result result, String key, MediaMetadata metadata) {
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player refresh direct type=%d key=%s flag=%s url=%s", playerType, key, result.getFlag(), summarizeUrl(result.getUrl().v()));
+        Task.execute(() -> {
+            try {
+                Result refreshed = SiteApi.playerContent(key, result.getFlag(), result.getUrl().v(), playerType);
+                App.post(() -> startRefreshedSwitchResult(refreshed, key, metadata));
+            } catch (Throwable e) {
+                App.post(() -> {
+                    clearPendingSwitchRestore();
+                    callback.onError(e.getMessage());
+                });
+            }
+        });
+    }
+
+    private void startRefreshedSwitchResult(Result result, String key, MediaMetadata metadata) {
+        if (result == null || result.hasMsg() || result.getRealUrl().isEmpty()) {
+            clearPendingSwitchRestore();
+            callback.onError(result == null ? ResUtil.getString(R.string.error_play_url) : result.hasMsg() ? result.getMsg() : ResUtil.getString(R.string.error_play_url));
+            return;
+        }
+        if (result.needParse()) {
+            spec = PlaySpec.fromParse(result, key, metadata, false);
+            bindPlaybackTrace();
+            parseJob = ParseJob.create(this).start(result, false);
+            return;
+        }
+        spec = PlaySpec.from(result, key, metadata);
+        bindPlaybackTrace();
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "switch player refreshed direct spec=%s", debugSpec());
+        setMediaItem(Constant.TIMEOUT_PLAY);
+        restoreAfterSwitchReparse();
+    }
+
+    private void restoreAfterSwitchReparse() {
+        if (!pendingSwitchRestore) return;
+        long position = pendingSwitchPositionMs;
+        float speed = pendingSwitchSpeed;
+        boolean repeat = pendingSwitchRepeat;
+        clearPendingSwitchRestore();
+        if (position > 0) seekTo(position);
+        if (speed != 1f) setSpeed(speed);
+        setRepeatOne(repeat);
+    }
+
+    private void clearPendingSwitchRestore() {
+        pendingSwitchRestore = false;
+        pendingSwitchPositionMs = C.TIME_UNSET;
+        pendingSwitchSpeed = 1f;
+        pendingSwitchRepeat = false;
+    }
+
+    public void setMediaItem() {
+        playWhenReady = player == null || player.getPlayWhenReady();
+        setMediaItem(Constant.TIMEOUT_PLAY);
+    }
+
+    private void setMediaItem(long timeout) {
+        if (spec == null || spec.getUrl() == null) return;
+        int seq = ++prepareSeq;
+        if (rejectMpvDrmMedia()) return;
+        if (LocalProxyDebug.shouldAwaitReady(spec.getUrl())) {
+            awaitLocalProxyAndSetMediaItem(seq, timeout);
+            return;
+        }
+        setMediaItemNow(timeout, true);
+    }
+
+    private void awaitLocalProxyAndSetMediaItem(int seq, long timeout) {
+        PlaySpec target = spec;
+        String url = target.getUrl();
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "local proxy await start seq=%d timeout=%d spec=%s", seq, timeout, debugSpec());
+        Task.execute(() -> {
+            boolean ready = LocalProxyDebug.awaitReady(url, LOCAL_PROXY_READY_TIMEOUT_MS);
+            App.post(() -> {
+                if (seq != prepareSeq || spec != target || engine == null) {
+                    if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "local proxy await skip seq=%d current=%d ready=%s", seq, prepareSeq, ready);
+                    return;
+                }
+                if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "local proxy await done seq=%d ready=%s spec=%s", seq, ready, debugSpec());
+                setMediaItemNow(timeout, true);
+            });
+        });
+    }
+
+    private void setMediaItemNow(long timeout, boolean notifyPrepare) {
+        if (spec == null || spec.getUrl() == null || engine == null) return;
+        spec.setPlaybackTraceId(playbackTrace.ensure());
+        spec.refreshPlaybackRoute();
+        logPlaybackRoute();
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "setMediaItem timeout=%d notify=%s spec=%s", timeout, notifyPrepare, debugSpec());
+        App.removeCallbacks(runnable);
+        setDanmakus(spec.getDanmakus());
+        prepareLutPipeline();
+        initTrack = false;
+        waitingLutBeforePlay = false;
+        applySubtitleStyle();
+        playbackTrace.mark(PlaybackTrace.Stage.PREPARE, "player=" + playerType + " decode=" + engine.getDecode());
+        engine.start(spec.checkUa(), playWhenReady);
+        scheduleMpvAutoOutputEvaluation();
+        startNativeAudioSession(playWhenReady);
+        App.post(runnable, timeout);
+        if (notifyPrepare) callback.onPrepare();
+    }
+
+    private void applySubtitleStyle() {
+        if (engine != null) engine.setSubtitleStyle(PlayerSetting.getSubtitleTextSize(), PlayerSetting.getSubtitlePosition());
+    }
+
+    private void startNativeAudioSession(boolean shouldPlay) {
+        if (!shouldPlay || !isNativePlayer()) return;
+        requestNativeAudioFocus();
+        registerNoisyReceiver();
+    }
+
+    private void stopNativeAudioSession() {
+        unregisterNoisyReceiver();
+        abandonNativeAudioFocus();
+        resumeOnAudioFocusGain = false;
+    }
+
+    private void requestNativeAudioFocus() {
+        AudioManager manager = audioManager();
+        if (manager == null || audioFocusHeld) return;
+        int result;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest = AudioFocusApi26.request(manager, audioFocusChangeListener);
+            result = audioFocusRequest == null ? AudioManager.AUDIOFOCUS_REQUEST_FAILED : AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        } else {
+            result = manager.requestAudioFocus(audioFocusChangeListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
+        }
+        audioFocusHeld = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        if (!audioFocusHeld && SpiderDebug.isEnabled()) SpiderDebug.log("player", "native audio focus request denied type=%d", playerType);
+    }
+
+    private void abandonNativeAudioFocus() {
+        if (!audioFocusHeld) return;
+        AudioManager manager = audioManager();
+        if (manager != null) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) AudioFocusApi26.abandon(manager, audioFocusRequest);
+            else manager.abandonAudioFocus(audioFocusChangeListener);
+        }
+        audioFocusRequest = null;
+        audioFocusHeld = false;
+    }
+
+    private void registerNoisyReceiver() {
+        if (noisyReceiverRegistered) return;
+        try {
+            App.get().registerReceiver(noisyReceiver, new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY));
+            noisyReceiverRegistered = true;
+        } catch (Throwable e) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "register noisy receiver failed error=%s", causeChain(e));
+        }
+    }
+
+    private void unregisterNoisyReceiver() {
+        if (!noisyReceiverRegistered) return;
+        try {
+            App.get().unregisterReceiver(noisyReceiver);
+        } catch (Throwable e) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "unregister noisy receiver failed error=%s", causeChain(e));
+        }
+        noisyReceiverRegistered = false;
+    }
+
+    private void onNativeAudioBecomingNoisy() {
+        if (!isNativePlayer() || player == null) return;
+        boolean wasPlaying = player.isPlaying();
+        player.pause();
+        stopNativeAudioSession();
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "native audio noisy pause type=%d wasPlaying=%s", playerType, wasPlaying);
+    }
+
+    private void onNativeAudioFocusChanged(int focusChange) {
+        if (!isNativePlayer() || player == null) return;
+        switch (focusChange) {
+            case AudioManager.AUDIOFOCUS_GAIN -> {
+                if (resumeOnAudioFocusGain) {
+                    resumeOnAudioFocusGain = false;
+                    startNativeAudioSession(true);
+                    player.play();
+                }
+            }
+            case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                resumeOnAudioFocusGain = player.isPlaying();
+                player.pause();
+            }
+            case AudioManager.AUDIOFOCUS_LOSS -> {
+                resumeOnAudioFocusGain = false;
+                player.pause();
+                stopNativeAudioSession();
+            }
+        }
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "native audio focus changed type=%d change=%d resume=%s", playerType, focusChange, resumeOnAudioFocusGain);
+    }
+
+    private AudioManager audioManager() {
+        return (AudioManager) App.get().getSystemService(Context.AUDIO_SERVICE);
+    }
+
+    private static final class AudioFocusApi26 {
+
+        private static Object request(AudioManager manager, AudioManager.OnAudioFocusChangeListener listener) {
+            android.media.AudioAttributes attributes = new android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+                    .build();
+            android.media.AudioFocusRequest request = new android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                    .setAudioAttributes(attributes)
+                    .setOnAudioFocusChangeListener(listener)
+                    .setAcceptsDelayedFocusGain(false)
+                    .setWillPauseWhenDucked(true)
+                    .build();
+            return manager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED ? request : null;
+        }
+
+        private static void abandon(AudioManager manager, Object request) {
+            if (request instanceof android.media.AudioFocusRequest) manager.abandonAudioFocusRequest((android.media.AudioFocusRequest) request);
+        }
+    }
+
+    private boolean rejectMpvDrmMedia() {
+        if (!isMpv() || spec == null || spec.getDrm() == null) return false;
+        App.removeCallbacks(runnable);
+        clearPendingSwitchRestore();
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "reject drm for mpv spec=%s drm=%s", debugSpec(), spec.getDrm().getType());
+        callback.onError(ResUtil.getString(R.string.error_play_mpv_drm_unsupported));
+        return true;
+    }
+
+    private void prepareLutPipeline() {
+        lutApplySeq++;
+        lutAppliedForItem = false;
+        lutApplyInProgress = false;
+        lutPipelineReadyForItem = false;
+        lutPipelinePrepareInProgress = false;
+        pendingLutPreview = false;
+        dynamicLutEffect.clear();
+        clearLutWarmupRecovery();
+        if (videoEffectsDirty) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "rebuild clean player before media item reason=prepare spec=%s", debugSpec());
+            rebuildPlayer();
+        }
+        clearVideoEffects("prepare");
+    }
+
+    private boolean shouldPrepareLutBeforePlay() {
+        return false;
+    }
+
+    public void applyLut(boolean notify) {
+        applyLut(notify, false);
+    }
+
+    public void applyLutPreview(boolean notify) {
+        applyLut(notify, true);
+    }
+
+    private void applyLut(boolean notify, boolean preview) {
+        if (engine == null) return;
+        if (isMpvSurfaceDirect() && MpvPerformanceSetting.getOutputMode() == MpvPerformanceSetting.OUTPUT_AUTO && LutSetting.isEnabled()) {
+            mpvAutoOutputEvaluated = true;
+            mpvOutputEvaluationSeq++;
+            if (rebuildAndRestartMpv(false, "lut-enabled")) App.post(() -> applyLut(notify, preview), 200);
+            return;
+        }
+        int seq = ++lutApplySeq;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "request seq=%d notify=%s preview=%s enabled=%s preset=%s state=%s videoFormat=%s tracksEmpty=%s active=%s dirty=%s applied=%s applying=%s pendingPreview=%s", seq, notify, preview, LutSetting.isEnabled(), LutSetting.getPresetId(), stateName(player.getPlaybackState()), engine.getVideoFormat(), engine.getCurrentTracks() == null || engine.getCurrentTracks().isEmpty(), videoEffectsActive, videoEffectsDirty, lutAppliedForItem, lutApplyInProgress, pendingLutPreview);
+        if (!lutAllowed) {
+            lutAppliedForItem = true;
+            lutApplyInProgress = false;
+            pendingLutPreview = false;
+            lutWarmupReloadPreviewPending = false;
+            setNeutralVideoEffects("disallowed");
+            completeLutBeforePlay("disallowed");
+            return;
+        }
+        if (!LutSetting.isEnabled()) {
+            if (waitingLutBeforePlay && shouldWaitForVideoFormat()) {
+                if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "wait video format before neutral start reason=off state=%s spec=%s", stateName(player.getPlaybackState()), debugSpec());
+                return;
+            }
+            lutAppliedForItem = true;
+            lutApplyInProgress = false;
+            pendingLutPreview = false;
+            lutWarmupReloadPreviewPending = false;
+            setNeutralVideoEffects("off");
+            completeLutBeforePlay("off");
+            return;
+        }
+        LutPreset preset = LutStore.find(LutSetting.getPresetId());
+        if (preset == null) {
+            if (waitingLutBeforePlay && shouldWaitForVideoFormat()) {
+                if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "wait video format before neutral start reason=missing state=%s spec=%s", stateName(player.getPlaybackState()), debugSpec());
+                return;
+            }
+            lutAppliedForItem = true;
+            lutApplyInProgress = false;
+            pendingLutPreview = false;
+            lutWarmupReloadPreviewPending = false;
+            setNeutralVideoEffects("missing");
+            completeLutBeforePlay("missing");
+            if (notify) Notify.show(R.string.lut_missing);
+            return;
+        }
+        String reason = getLutUnavailableReason();
+        if (!TextUtils.isEmpty(reason)) {
+            lutAppliedForItem = true;
+            lutApplyInProgress = false;
+            pendingLutPreview = false;
+            lutWarmupReloadPreviewPending = false;
+            setNeutralVideoEffects(reason);
+            completeLutBeforePlay(reason);
+            if (notify) Notify.show(reason);
+            return;
+        }
+        if (shouldWaitForLutFormat()) {
+            lutAppliedForItem = false;
+            lutApplyInProgress = false;
+            if (notify || preview) pendingLutPreview = preview;
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "wait video format notify=%s preview=%s state=%s spec=%s", notify, preview, stateName(player.getPlaybackState()), debugSpec());
+            return;
+        }
+        if (notify || preview) pendingLutPreview = preview;
+        if (engine.supportsNativeLut()) {
+            applyNativeLut(seq, preset, notify, preview);
+            return;
+        }
+        if (!ensureLutPipelineReadyForCurrentItem("request")) {
+            return;
+        }
+        lutAppliedForItem = false;
+        lutApplyInProgress = true;
+        pendingLutPreview = false;
+        int strength = LutSetting.getStrength();
+        int previewSeconds = LutSetting.getPreviewSeconds();
+        Task.execute(() -> {
+            long start = System.currentTimeMillis();
+            try {
+                ColorLut colorLut = LutEffectFactory.createColorLut(preset, strength);
+                if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "create dynamic preset=%s format=%s strength=%d preview=%s seconds=%d cost=%dms", preset.getId(), preset.getFormat(), strength, preview, previewSeconds, System.currentTimeMillis() - start);
+                App.post(() -> applyLutColor(seq, colorLut, notify, preview, previewSeconds));
+            } catch (Throwable e) {
+                if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "create failed preset=%s strength=%d error=%s", preset.getId(), strength, causeChain(e));
+                App.post(() -> {
+                    if (seq != lutApplySeq || engine == null) return;
+                    lutApplyInProgress = false;
+                    setNeutralVideoEffects("error");
+                    completeLutBeforePlay("error");
+                    if (notify) Notify.show(R.string.lut_apply_failed);
+                });
+            }
+        });
+    }
+
+    private void applyNativeLut(int seq, LutPreset preset, boolean notify, boolean preview) {
+        lutAppliedForItem = false;
+        lutApplyInProgress = true;
+        pendingLutPreview = false;
+        int strength = LutSetting.getStrength();
+        int previewSeconds = LutSetting.getPreviewSeconds();
+        long previewStartMs = preview && player != null ? Math.max(0, player.getCurrentPosition()) : 0;
+        Task.execute(() -> {
+            long start = System.currentTimeMillis();
+            try {
+                MpvLutShader shader = MpvLutShaderFactory.create(preset, strength, preview, previewStartMs, previewSeconds);
+                if (SpiderDebug.isEnabled()) SpiderDebug.log("lut-mpv", "create shader preset=%s format=%s strength=%d preview=%s start=%d seconds=%d cost=%dms", preset.getId(), preset.getFormat(), strength, preview, previewStartMs, previewSeconds, System.currentTimeMillis() - start);
+                App.post(() -> applyNativeLutShader(seq, shader, notify, preview));
+            } catch (Throwable e) {
+                if (SpiderDebug.isEnabled()) SpiderDebug.log("lut-mpv", "create shader failed preset=%s strength=%d error=%s", preset.getId(), strength, causeChain(e));
+                App.post(() -> {
+                    if (seq != lutApplySeq || engine == null) return;
+                    lutApplyInProgress = false;
+                    setNeutralVideoEffects("native_error");
+                    completeLutBeforePlay("native_error");
+                    if (notify) Notify.show(R.string.lut_apply_failed);
+                });
+            }
+        });
+    }
+
+    private void applyNativeLutShader(int seq, MpvLutShader shader, boolean notify, boolean preview) {
+        if (seq != lutApplySeq || engine == null) return;
+        String reason = getLutUnavailableReason();
+        if (!TextUtils.isEmpty(reason)) {
+            lutApplyInProgress = false;
+            setNeutralVideoEffects(reason);
+            completeLutBeforePlay(reason);
+            if (notify) Notify.show(reason);
+            return;
+        }
+        if (safeSetNativeLut(shader, preview ? "preview_native" : "apply_native")) {
+            lutAppliedForItem = true;
+            pendingLutPreview = false;
+            if (preview) scheduleNativeLutPreviewCommit(seq);
+        } else {
+            lutAppliedForItem = false;
+        }
+        lutApplyInProgress = false;
+        completeLutBeforePlay(preview ? "preview_native" : "apply_native");
+    }
+
+    private void scheduleNativeLutPreviewCommit(int seq) {
+        int delayMs = Math.max(1, LutSetting.getPreviewSeconds()) * 1000 + MpvLutShaderFactory.PREVIEW_SLIDE_MS;
+        App.post(() -> {
+            if (seq != lutApplySeq || engine == null || !engine.supportsNativeLut()) return;
+            if (!lutAllowed || !LutSetting.isEnabled()) return;
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("lut-mpv", "commit preview shader seq=%d delay=%d", seq, delayMs);
+            applyLut(false, false);
+        }, delayMs);
+    }
+
+    private void applyLutColor(int seq, ColorLut colorLut, boolean notify, boolean preview, int previewSeconds) {
+        if (seq != lutApplySeq || engine == null) return;
+        String reason = getLutUnavailableReason();
+        if (!TextUtils.isEmpty(reason)) {
+            dynamicLutEffect.clear();
+            lutApplyInProgress = false;
+            setNeutralVideoEffects(reason);
+            completeLutBeforePlay(reason);
+            if (notify) Notify.show(reason);
+            return;
+        }
+        if (shouldWaitForLutFormat()) {
+            lutAppliedForItem = false;
+            lutApplyInProgress = false;
+            if (notify || preview) pendingLutPreview = preview;
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "wait video format before set effects preview=%s spec=%s", preview, debugSpec());
+            return;
+        }
+        dynamicLutEffect.set(colorLut, preview, previewSeconds);
+        if (safeSetVideoEffects(dynamicLutEffect.effects(), preview ? "preview_dynamic" : "apply_dynamic")) {
+            lutAppliedForItem = true;
+            pendingLutPreview = false;
+        } else {
+            lutAppliedForItem = false;
+        }
+        lutApplyInProgress = false;
+        completeLutBeforePlay(preview ? "preview" : "apply");
+    }
+
+    private void applyLutForCurrentItem() {
+        if (engine == null) return;
+        if (!lutAllowed) {
+            if (lutAppliedForItem && !videoEffectsActive && !waitingLutBeforePlay) return;
+            lutAppliedForItem = true;
+            lutApplyInProgress = false;
+            pendingLutPreview = false;
+            lutWarmupReloadPreviewPending = false;
+            setNeutralVideoEffects("auto_disallowed");
+            completeLutBeforePlay("auto_disallowed");
+            return;
+        }
+        if (!LutSetting.isEnabled()) {
+            if (lutAppliedForItem && !videoEffectsActive && !waitingLutBeforePlay) return;
+            lutAppliedForItem = true;
+            lutApplyInProgress = false;
+            pendingLutPreview = false;
+            lutWarmupReloadPreviewPending = false;
+            setNeutralVideoEffects("auto_off");
+            completeLutBeforePlay("auto_off");
+            return;
+        }
+        String reason = getLutUnavailableReason();
+        if (!TextUtils.isEmpty(reason)) {
+            lutAppliedForItem = true;
+            lutApplyInProgress = false;
+            pendingLutPreview = false;
+            lutWarmupReloadPreviewPending = false;
+            setNeutralVideoEffects(reason);
+            completeLutBeforePlay(reason);
+            return;
+        }
+        if (shouldWaitForLutFormat()) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "wait video format before auto apply state=%s spec=%s", stateName(player.getPlaybackState()), debugSpec());
+            return;
+        }
+        if (lutApplyInProgress) return;
+        if (lutAppliedForItem) return;
+        if (!ensureLutPipelineReadyForCurrentItem("auto")) return;
+        boolean preview = pendingLutPreview || lutWarmupReloadPreviewPending;
+        lutWarmupReloadPreviewPending = false;
+        applyLut(false, preview);
+    }
+
+    private void completeLutBeforePlay(String reason) {
+        if (!waitingLutBeforePlay || player == null) return;
+        waitingLutBeforePlay = false;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "start playback after lut decision reason=%s active=%s dirty=%s", reason, videoEffectsActive, videoEffectsDirty);
+        player.play();
+    }
+
+    private boolean ensureLutPipelineReadyForCurrentItem(String reason) {
+        if (lutPipelineReadyForItem) return true;
+        if (lutPipelinePrepareInProgress) return false;
+        if (!canWarmLutPipeline()) return true;
+        if (shouldWaitForVideoFormat()) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "wait video format before pipeline warmup reason=%s state=%s spec=%s", reason, stateName(player.getPlaybackState()), debugSpec());
+            return false;
+        }
+        String unavailable = getLutUnavailableReason();
+        if (!TextUtils.isEmpty(unavailable)) return true;
+        return prepareLutPipelineForCurrentItem(reason);
+    }
+
+    private boolean prepareLutPipelineForCurrentItem(String reason) {
+        if (spec == null || engine == null || player == null) return true;
+        lutPipelinePrepareInProgress = true;
+        lutAppliedForItem = false;
+        lutApplyInProgress = false;
+        dynamicLutEffect.clear();
+        long position = Math.max(0, getPosition());
+        boolean playWhenReady = player.getPlayWhenReady();
+        float speed = getSpeed();
+        if (!safeSetVideoEffects(dynamicLutEffect.effects(), reason + "_prepare_dynamic_passthrough")) {
+            lutPipelinePrepareInProgress = false;
+            return true;
+        }
+        lutPipelineReadyForItem = true;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "prepare current item with effects reason=%s position=%d play=%s spec=%s", reason, position, playWhenReady, debugSpec());
+        startLutWarmupRecovery();
+        engine.restart(spec.checkUa(), position, playWhenReady);
+        if (speed != 1f) setSpeed(speed);
+        lutPipelinePrepareInProgress = false;
+        return false;
+    }
+
+    private void startLutWarmupRecovery() {
+        lutWarmupRecoveryActive = true;
+        lutWarmupRefreshRequested = false;
+        lutWarmupRecoveredErrors = 0;
+    }
+
+    private void clearLutWarmupRecovery() {
+        lutWarmupRecoveryActive = false;
+        lutWarmupRefreshRequested = false;
+        lutWarmupRecoveredErrors = 0;
+    }
+
+    private boolean retryLutWarmupByRefresh(String reason) {
+        if (!lutWarmupRecoveryActive || lutWarmupRefreshRequested || !LutSetting.isEnabled()) return false;
+        lutWarmupRefreshRequested = true;
+        lutWarmupRecoveryActive = false;
+        lutWarmupReloadPreviewPending = true;
+        App.removeCallbacks(runnable);
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "request playback refresh after warmup failure reason=%s errors=%d spec=%s", reason, lutWarmupRecoveredErrors, debugSpec());
+        callback.onReload(RELOAD_LUT_WARMUP);
+        return true;
+    }
+
+    private boolean retryLutWarmupByRefresh(PlayerEngine.ErrorAction action, PlaybackException e) {
+        if (!lutWarmupRecoveryActive || lutWarmupRefreshRequested || !LutSetting.isEnabled()) return false;
+        if (action == PlayerEngine.ErrorAction.RECOVERED && ++lutWarmupRecoveredErrors < LUT_WARMUP_RECOVERED_ERROR_REFRESH_THRESHOLD) return false;
+        if (action != PlayerEngine.ErrorAction.RECOVERED && action != PlayerEngine.ErrorAction.FATAL && action != PlayerEngine.ErrorAction.RELOAD) return false;
+        return retryLutWarmupByRefresh("error_" + e.errorCode + "_" + action);
+    }
+
+    private boolean shouldWaitForLutFormat() {
+        if (engine == null || !LutSetting.isEnabled()) return false;
+        return shouldWaitForVideoFormat();
+    }
+
+    private boolean shouldWaitForVideoFormat() {
+        if (engine == null) return false;
+        Format currentFormat = engine.getVideoFormat();
+        if (isUsableVideoFormat(currentFormat)) return false;
+        Tracks tracks = engine.getCurrentTracks();
+        if (tracks == null || tracks.isEmpty()) return true;
+        boolean hasVideo = false;
+        boolean hasUsableFormat = false;
+        for (Tracks.Group group : tracks.getGroups()) {
+            if (group.getType() != C.TRACK_TYPE_VIDEO) continue;
+            hasVideo = true;
+            for (int i = 0; i < group.length; i++) {
+                if (isUsableVideoFormat(group.getTrackFormat(i))) {
+                    hasUsableFormat = true;
+                    break;
+                }
+            }
+            if (hasUsableFormat) break;
+        }
+        return hasVideo && !hasUsableFormat;
+    }
+
+    private boolean isUsableVideoFormat(Format format) {
+        if (format == null) return false;
+        return !TextUtils.isEmpty(format.sampleMimeType) || !TextUtils.isEmpty(format.codecs) || format.colorInfo != null || format.width > 0 || format.height > 0;
+    }
+
+    private void clearVideoEffects(String reason) {
+        dynamicLutEffect.clear();
+        if (engine != null && engine.supportsNativeLut()) {
+            safeSetNativeLut(null, reason);
+            return;
+        }
+        safeSetVideoEffects(Collections.emptyList(), reason);
+    }
+
+    private void setNeutralVideoEffects(String reason) {
+        dynamicLutEffect.clear();
+        if (engine != null && engine.supportsNativeLut()) {
+            safeSetNativeLut(null, reason);
+            return;
+        }
+        if (canKeepWarmNeutralEffects()) safeSetVideoEffects(dynamicLutEffect.effects(), reason + "_dynamic_passthrough");
+        else clearVideoEffects(reason);
+    }
+
+    private boolean canKeepWarmNeutralEffects() {
+        if (!LutSetting.isEnabled()) return false;
+        if (!canWarmLutPipeline()) return false;
+        if (shouldWaitForVideoFormat()) return false;
+        return TextUtils.isEmpty(getLutUnavailableReason());
+    }
+
+    private boolean canWarmLutPipeline() {
+        if (!lutAllowed) return false;
+        if (engine == null || !engine.supportsVideoEffects()) return false;
+        if (spec != null && spec.getDrm() != null) return false;
+        if (PlayerSetting.isTunnel()) return false;
+        if (engine.getDecode() == PlayerEngine.SOFT) return false;
+        if (PlayerSetting.isVideoPrefer()) return false;
+        return true;
+    }
+
+    private boolean safeSetVideoEffects(List<Effect> effects, String reason) {
+        if (engine == null) return false;
+        boolean empty = effects == null || effects.isEmpty();
+        if (empty && !videoEffectsActive) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "skip clear effects reason=%s", reason);
+            return false;
+        }
+        try {
+            engine.setVideoEffects(empty ? Collections.emptyList() : effects);
+            if (empty) {
+                videoEffectsActive = false;
+            } else {
+                videoEffectsActive = true;
+                videoEffectsDirty = true;
+            }
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "set effects=%d reason=%s active=%s dirty=%s", empty ? 0 : effects.size(), reason, videoEffectsActive, videoEffectsDirty);
+            return true;
+        } catch (Throwable e) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "set effects failed reason=%s error=%s", reason, causeChain(e));
+            return false;
+        }
+    }
+
+    private boolean safeSetNativeLut(MpvLutShader shader, String reason) {
+        if (engine == null || !engine.supportsNativeLut()) return false;
+        try {
+            engine.setNativeLutShader(shader);
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("lut-mpv", "set shader=%s reason=%s", shader == null ? "none" : shader.diagnostics(), reason);
+            return true;
+        } catch (Throwable e) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("lut-mpv", "set shader failed reason=%s error=%s", reason, causeChain(e));
+            return false;
+        }
+    }
+
+    private void setDanmakus(List<Danmaku> items) {
+        setDanmaku(items == null || items.isEmpty() ? Danmaku.empty() : items.get(0));
+    }
+
+    public void setDanmaku(Danmaku item) {
+        setDanmaku(item, false);
+    }
+
+    public void reloadDanmaku(Danmaku item) {
+        setDanmaku(item, true);
+    }
+
+    private void setDanmaku(Danmaku item, boolean force) {
+        if (item.isEmpty()) {
+            if (spec != null) spec.setDanmaku(item);
+            clearDanmaku("empty_source");
+            return;
+        }
+        if (danmakuController == null) return;
+        String url = DanmakuUrlPolicy.normalize(DanmakuSetting.getValidApiUrl(), item.getRealUrl());
+        DanmakuUrlPolicy.SourceType sourceType = DanmakuUrlPolicy.classify(url);
+        if (!sourceType.isSupported()) {
+            if (spec != null) spec.setDanmaku(item);
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "reject %s", DanmakuUrlPolicy.logSummary(url));
+            clearDanmaku("unsupported_source");
+            return;
+        }
+        String key = normalizeDanmakuKey(url);
+        if (!force && TextUtils.equals(currentDanmakuUrl, url)) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "skip same %s", DanmakuUrlPolicy.logSummary(url));
+            return;
+        }
+        if (force && shouldSkipForcedDanmakuReload(key)) {
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "skip duplicate reload key=%s %s", summarizeUrl(key), DanmakuUrlPolicy.logSummary(url));
+            return;
+        }
+        if (spec != null) spec.setDanmaku(item);
+        if (force && currentDanmakuUrl != null) danmakuController.clearItems();
+        currentDanmakuUrl = url;
+        currentDanmakuKey = key;
+        if (sourceType.isLive()) {
+            danmakuController.clearItems();
+            loadingDanmakuKey = null;
+            danmakuLoadStartedAtMs = 0;
+            danmakuLoadInProgress = false;
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "select live source pending websocket connection %s", DanmakuUrlPolicy.logSummary(url));
+            if (danmakuForeground && DanmakuSetting.isShow()) connectLiveDanmakuSession(url);
+            return;
+        }
+        stopLiveDanmakuSession("static_source");
+        loadingDanmakuKey = key;
+        danmakuLoadStartedAtMs = SystemClock.elapsedRealtime();
+        danmakuLoadInProgress = true;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "%s name=%s %s key=%s", force ? "reload" : "load", item.getName(), DanmakuUrlPolicy.logSummary(url), summarizeUrl(key));
+        danmakuController.setDataSource(Uri.parse(url));
+    }
+
+    private boolean shouldSkipForcedDanmakuReload(String key) {
+        if (TextUtils.isEmpty(key) || !TextUtils.equals(currentDanmakuKey, key) || danmakuLoadStartedAtMs <= 0) return false;
+        if (danmakuLoadInProgress && (TextUtils.isEmpty(loadingDanmakuKey) || TextUtils.equals(loadingDanmakuKey, key))) return true;
+        long elapsed = SystemClock.elapsedRealtime() - danmakuLoadStartedAtMs;
+        return elapsed >= 0 && elapsed < DANMAKU_FORCE_RELOAD_DEBOUNCE_MS;
+    }
+
+    private void finishDanmakuLoad(Uri uri) {
+        String key = normalizeDanmakuKey(uri == null ? "" : uri.toString());
+        if (!TextUtils.isEmpty(loadingDanmakuKey) && !TextUtils.equals(loadingDanmakuKey, key)) return;
+        danmakuLoadInProgress = false;
+        loadingDanmakuKey = null;
+    }
+
+    private void clearDanmakuState() {
+        currentDanmakuUrl = null;
+        currentDanmakuKey = null;
+        loadingDanmakuKey = null;
+        danmakuLoadStartedAtMs = 0;
+        danmakuLoadInProgress = false;
+    }
+
+    private void clearDanmaku(String reason) {
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku", "clear reason=%s current=%s", reason, DanmakuUrlPolicy.logSummary(currentDanmakuUrl));
+        stopLiveDanmakuSession(reason);
+        liveDanmakuBatcher.clear();
+        liveDanmakuBuffer.clear();
+        if (danmakuController != null) danmakuController.clearItems();
+        clearDanmakuState();
+    }
+
+    private void connectLiveDanmakuSession(String url) {
+        if (TextUtils.isEmpty(url)) return;
+        if (liveDanmakuSession == null) {
+            liveDanmakuSession = new LiveDanmakuWebSocketSession(App.get(), new LiveDanmakuWebSocketSession.Listener() {
+                @Override
+                public void onStateChanged(LiveDanmakuWebSocketSession.State state, long generation, String sourceUrl, int code, String detail) {
+                    liveDanmakuGeneration = generation;
+                    liveDanmakuMetrics.onState(state, code, SystemClock.elapsedRealtime());
+                    if (state == LiveDanmakuWebSocketSession.State.CONNECTING) {
+                        liveDanmakuBuffer.reset(generation);
+                        liveDanmakuBatcher.reset(generation);
+                    } else if (state == LiveDanmakuWebSocketSession.State.RETRY_WAIT || state == LiveDanmakuWebSocketSession.State.STOPPED || state == LiveDanmakuWebSocketSession.State.RELEASED) {
+                        liveDanmakuBatcher.clear();
+                        liveDanmakuBuffer.clear();
+                    }
+                    if (state != LiveDanmakuWebSocketSession.State.OPEN) {
+                        App.post(() -> logLiveDanmakuMetrics("state_" + state, false));
+                        clearLiveDanmakuRenderer(generation);
+                    }
+                    if (state == LiveDanmakuWebSocketSession.State.CONNECTING || state == LiveDanmakuWebSocketSession.State.OPEN || state == LiveDanmakuWebSocketSession.State.RETRY_WAIT) scheduleLiveDanmakuMetrics();
+                    else App.removeCallbacks(liveDanmakuMetricsRunnable);
+                    if (SpiderDebug.isEnabled()) SpiderDebug.log("danmaku-ws", "state=%s generation=%d code=%d detail=%s %s", state, generation, code, detail, DanmakuUrlPolicy.logSummary(sourceUrl));
+                }
+
+                @Override
+                public void onMessage(long generation, String text) {
+                    if (generation != liveDanmakuGeneration) return;
+                    liveDanmakuMetrics.onFrame();
+                    long parseStartedNs = SystemClock.elapsedRealtimeNanos();
+                    LiveDanmakuParser.Result result = LiveDanmakuParser.parse(text, generation, SystemClock.elapsedRealtime());
+                    liveDanmakuMetrics.onParse(result, SystemClock.elapsedRealtimeNanos() - parseStartedNs);
+                    if (!result.isAccepted()) return;
+                    LiveDanmakuWebSocketSession session = liveDanmakuSession;
+                    if (session != null) session.markMessageAccepted(generation);
+                    if (result.kind() == LiveDanmakuParser.Kind.ONLINE) {
+                        liveDanmakuBuffer.updateOnline(generation, result.online());
+                    } else {
+                        if (!liveDanmakuPlaybackActive) return;
+                        LiveDanmakuMessage message = result.message();
+                        LiveDanmakuBuffer.OfferResult offer = liveDanmakuBuffer.offer(message);
+                        liveDanmakuMetrics.onOffer(offer);
+                        if (offer != LiveDanmakuBuffer.OfferResult.STALE) liveDanmakuBatcher.requestDrain(generation);
+                    }
+                }
+            });
+        }
+        liveDanmakuGeneration = liveDanmakuSession.connect(url);
+    }
+
+    private void stopLiveDanmakuSession(String reason) {
+        if (liveDanmakuSession != null) liveDanmakuGeneration = liveDanmakuSession.stop(reason);
+    }
+
+    private void releaseLiveDanmakuSession() {
+        if (liveDanmakuSession == null) return;
+        liveDanmakuSession.release();
+        liveDanmakuSession = null;
+    }
+
+    private void onLiveDanmakuBatch(long generation, List<LiveDanmakuMessage> messages) {
+        long scheduledAtMs = SystemClock.elapsedRealtime();
+        App.post(() -> {
+            if (generation != liveDanmakuGeneration || messages.isEmpty() || danmakuController == null || !DanmakuSetting.isShow()) return;
+            liveDanmakuMetrics.onBatch(messages.size(), SystemClock.elapsedRealtime() - scheduledAtMs);
+            List<androidx.media3.ui.danmaku.Danmaku> batch = new ArrayList<>(messages.size());
+            for (LiveDanmakuMessage message : messages) {
+                int pool = message.type() == LiveDanmakuMessage.Type.SUPER_CHAT ? androidx.media3.ui.danmaku.Danmaku.POOL_SPECIAL : androidx.media3.ui.danmaku.Danmaku.POOL_NORMAL;
+                long ttlMs = message.type() == LiveDanmakuMessage.Type.SUPER_CHAT ? LiveDanmakuBuffer.DEFAULT_PRIORITY_TTL_MS : LiveDanmakuBuffer.DEFAULT_NORMAL_TTL_MS;
+                batch.add(new androidx.media3.ui.danmaku.Danmaku(message.text(), 0L, androidx.media3.ui.danmaku.Danmaku.TYPE_SCROLL, message.colorArgb(), 0f, pool, "", 0L)
+                        .setLiveExpiryElapsedRealtimeMs(message.receivedAtMs() + ttlMs));
+            }
+            danmakuController.offerLiveBatch(batch);
+        });
+    }
+
+    private void clearLiveDanmakuRenderer(long generation) {
+        App.post(() -> {
+            if (generation != liveDanmakuGeneration || danmakuController == null) return;
+            danmakuController.clearLiveItems();
+        });
+    }
+
+    private void discardLiveDanmakuPending() {
+        liveDanmakuBuffer.discardPending();
+        liveDanmakuBatcher.reset(liveDanmakuGeneration);
+        clearLiveDanmakuRenderer(liveDanmakuGeneration);
+    }
+
+    private void scheduleLiveDanmakuMetrics() {
+        if (!SpiderDebug.isEnabled()) return;
+        App.post(liveDanmakuMetricsRunnable, LIVE_DANMAKU_METRICS_INTERVAL_MS);
+    }
+
+    private void logLiveDanmakuMetrics(String reason, boolean reschedule) {
+        if (!SpiderDebug.isEnabled()) return;
+        long nowMs = SystemClock.elapsedRealtime();
+        LiveDanmakuMetrics.Snapshot metrics = liveDanmakuMetrics.snapshotAndReset(nowMs);
+        LiveDanmakuBuffer.Snapshot buffer = liveDanmakuBuffer.snapshot();
+        androidx.media3.ui.danmaku.DanmakuView.LiveStats render = danmakuController == null ? androidx.media3.ui.danmaku.DanmakuView.LiveStats.EMPTY : danmakuController.getLiveStats();
+        SpiderDebug.log("danmaku-ws-metrics", "reason=%s state=%s stateMs=%d openMs=%d code=%d received=%d parsed=%d invalid=%d normal=%d super=%d online=%d queued=%d overflow=%d stale=%d batches=%d batchMessages=%d parseAvgUs=%d parseMaxUs=%d mainAvgMs=%d mainMaxMs=%d retries=%d appPending=%d/%d appExpired=%d appHigh=%d renderOffered=%d renderAdmitted=%d renderOverflow=%d renderExpired=%d trackWaits=%d renderPending=%d renderHigh=%d active=%d", reason, metrics.state(), metrics.stateDurationMs(), metrics.openDurationMs(), metrics.lastCode(), metrics.received(), metrics.parsed(), metrics.invalid(), metrics.normal(), metrics.superChat(), metrics.online(), metrics.queued(), metrics.overflow(), metrics.stale(), metrics.batches(), metrics.batchedMessages(), metrics.averageParseNanos() / 1000L, metrics.maxParseNanos() / 1000L, metrics.averageMainDelayMs(), metrics.maxMainDelayMs(), metrics.retryWaits(), buffer.normalPending(), buffer.priorityPending(), buffer.droppedExpired(), buffer.highWaterMark(), render.offered, render.admitted, render.droppedOverflow, render.droppedExpired, render.trackWaits, render.pending, render.highWaterMark, render.active);
+        if (reschedule && liveDanmakuSession != null && liveDanmakuSession.state() != LiveDanmakuWebSocketSession.State.STOPPED && liveDanmakuSession.state() != LiveDanmakuWebSocketSession.State.RELEASED) scheduleLiveDanmakuMetrics();
+    }
+
+    private void logDanmakuLoad(String event, Uri uri, int count, IOException error) {
+        if (!SpiderDebug.isEnabled()) return;
+        long elapsed = danmakuLoadStartedAtMs <= 0 ? -1 : SystemClock.elapsedRealtime() - danmakuLoadStartedAtMs;
+        if (error == null) {
+            SpiderDebug.log("danmaku", "load %s count=%d elapsed=%dms %s", event, count, elapsed, DanmakuUrlPolicy.logSummary(uri == null ? "" : uri.toString()));
+        } else {
+            SpiderDebug.log("danmaku", "load %s elapsed=%dms %s error=%s", event, elapsed, DanmakuUrlPolicy.logSummary(uri == null ? "" : uri.toString()), error.getMessage());
+        }
+    }
+
+    private static String normalizeDanmakuKey(String url) {
+        if (TextUtils.isEmpty(url)) return "";
+        String value = url.trim();
+        try {
+            Uri uri = Uri.parse(value);
+            String nested = getNestedDanmakuUrl(uri);
+            return TextUtils.isEmpty(nested) ? value : normalizeDanmakuKey(nested);
+        } catch (Throwable e) {
+            return value;
+        }
+    }
+
+    private static String getNestedDanmakuUrl(Uri uri) {
+        if (uri == null) return "";
+        String path = uri.getPath();
+        if (TextUtils.isEmpty(path) || !path.endsWith("/danmaku")) return "";
+        return uri.getQueryParameter("url");
+    }
+
+    public void addDanmaku(Danmaku item) {
+        if (danmakuController == null || item.isEmpty()) return;
+        if (spec != null) spec.addDanmaku(item);
+    }
+
+    @Override
+    public void onParseSuccess(Map<String, String> headers, String url, String from) {
+        if (!TextUtils.isEmpty(from)) Notify.show(ResUtil.getString(R.string.parse_from, from));
+        playbackTrace.mark(PlaybackTrace.Stage.PARSE_COMPLETE, "headers=" + (headers == null ? 0 : headers.size()));
+        PlaybackTrace.log("player", playbackTrace.current(), "parseSuccess from=%s url=%s headers=%s", from, summarizeUrl(url), headers == null ? 0 : headers.size());
+        if (headers != null) headers.remove(HttpHeaders.RANGE);
+        if (spec != null) spec.setHeaders(headers);
+        if (spec != null) spec.setUrl(url);
+        setMediaItem(Constant.TIMEOUT_PLAY);
+        restoreAfterSwitchReparse();
+    }
+
+    @Override
+    public void onParseError() {
+        clearPendingSwitchRestore();
+        callback.onError(ResUtil.getString(R.string.error_play_parse));
+    }
+
+    private String debugSpec() {
+        if (spec == null) return "null";
+        return "trace=" + playbackTrace.current() +
+                ", key=" + spec.getKey() +
+                ", url=" + summarizeUrl(spec.getUrl()) +
+                ", format=" + spec.getFormat() +
+                ", headers=" + (spec.getHeaders() == null ? 0 : spec.getHeaders().size()) +
+                ", subs=" + (spec.getSubs() == null ? 0 : spec.getSubs().size()) +
+                ", danmakus=" + (spec.getDanmakus() == null ? 0 : spec.getDanmakus().size());
+    }
+
+    private void beginPlaybackTrace(String reason) {
+        playbackBufferingTracker.reset();
+        playbackTrace.begin();
+        lastLoggedRouteTraceId = PlaybackTrace.NONE;
+        bindPlaybackTrace();
+        playbackTrace.mark(PlaybackTrace.Stage.REQUEST, "reason=" + reason + " player=" + playerType + " decode=" + (engine == null ? -1 : engine.getDecode()));
+    }
+
+    private void bindPlaybackTrace() {
+        if (spec != null) spec.setPlaybackTraceId(playbackTrace.current());
+    }
+
+    private void logPlaybackRoute() {
+        if (spec == null) return;
+        String traceId = playbackTrace.current();
+        if (traceId.equals(lastLoggedRouteTraceId)) return;
+        PlaybackRoute.Resolution resolution = spec.getPlaybackRoute();
+        PlaybackTrace.log("playback-route", traceId, "%s", resolution.logSummary());
+        lastLoggedRouteTraceId = traceId;
+    }
+
+    private static String summarizeUrl(String url) {
+        if (TextUtils.isEmpty(url)) return "";
+        Uri uri = Uri.parse(url);
+        String host = uri.getHost();
+        int port = uri.getPort();
+        String path = uri.getPath();
+        StringBuilder builder = new StringBuilder();
+        builder.append(uri.getScheme()).append("://");
+        builder.append(TextUtils.isEmpty(host) ? "unknown" : host);
+        if (port > 0) builder.append(':').append(port);
+        if (!TextUtils.isEmpty(path)) builder.append(path.length() > 48 ? path.substring(0, 48) + "..." : path);
+        builder.append(" len=").append(url.length());
+        return builder.toString();
+    }
+
+    private static String stateName(int state) {
+        return switch (state) {
+            case Player.STATE_IDLE -> "IDLE";
+            case Player.STATE_BUFFERING -> "BUFFERING";
+            case Player.STATE_READY -> "READY";
+            case Player.STATE_ENDED -> "ENDED";
+            default -> String.valueOf(state);
+        };
+    }
+
+    private void markStartupCompletion(boolean ready, Tracks tracks) {
+        if (tracks == null) return;
+        boolean hasVideo = tracks.containsType(C.TRACK_TYPE_VIDEO);
+        boolean hasAudio = tracks.containsType(C.TRACK_TYPE_AUDIO);
+        PlaybackStartupPolicy.Completion completion = PlaybackStartupPolicy.resolve(ready, playerType == PlayerSetting.MPV, hasVideo, hasAudio);
+        if (completion == PlaybackStartupPolicy.Completion.FIRST_FRAME) {
+            playbackTrace.mark(PlaybackTrace.Stage.FIRST_FRAME, "source=mpv-playback-restart player=" + playerType);
+        } else if (completion == PlaybackStartupPolicy.Completion.AUDIO_PLAYABLE) {
+            playbackTrace.mark(PlaybackTrace.Stage.AUDIO_PLAYABLE, "source=ready player=" + playerType);
+        }
+    }
+
+    private void recordBufferingState(int state) {
+        if (player == null || (playerType != PlayerSetting.EXO && playerType != PlayerSetting.MPV)) return;
+        boolean startupComplete = playbackTrace.hasStage(PlaybackTrace.Stage.FIRST_FRAME) || playbackTrace.hasStage(PlaybackTrace.Stage.AUDIO_PLAYABLE);
+        PlaybackBufferingTracker.Event event = playbackBufferingTracker.update(
+                state == Player.STATE_BUFFERING,
+                startupComplete,
+                SystemClock.elapsedRealtime(),
+                state,
+                currentPositionSnapshot(),
+                forwardBufferedSnapshot(),
+                loadingSnapshot());
+        if (event == null) return;
+        PlaybackTrace.log("playback-buffer", playbackTrace.current(),
+                "event=%s phase=%s outcome=%s duration=%dms count=%d total=%dms position=%d forward=%d state=%s loading=%s",
+                event.type().label(), event.phase().label(), bufferingOutcome(event), event.durationMs(), event.rebufferCount(), event.rebufferTotalMs(),
+                event.positionMs(), event.forwardBufferedMs(), stateName(event.playbackState()), event.loading());
+    }
+
+    private long currentPositionSnapshot() {
+        try {
+            return Math.max(0, player.getCurrentPosition());
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    private long forwardBufferedSnapshot() {
+        try {
+            return Math.max(0, player.getTotalBufferedDuration());
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    private boolean loadingSnapshot() {
+        try {
+            return player.isLoading();
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static String bufferingOutcome(PlaybackBufferingTracker.Event event) {
+        if (event.type() == PlaybackBufferingTracker.Type.START) return "-";
+        return switch (event.playbackState()) {
+            case Player.STATE_READY -> "ready";
+            case Player.STATE_ENDED -> "ended";
+            case Player.STATE_IDLE -> "idle";
+            default -> "left-buffering";
+        };
+    }
+
+    private static String trackSummary(Tracks tracks) {
+        return "video=" + tracks.containsType(C.TRACK_TYPE_VIDEO) +
+                " audio=" + tracks.containsType(C.TRACK_TYPE_AUDIO) +
+                " text=" + tracks.containsType(C.TRACK_TYPE_TEXT) +
+                " groups=" + tracks.getGroups().size();
+    }
+
+    private static String causeChain(Throwable error) {
+        if (error == null) return "null";
+        StringBuilder builder = new StringBuilder();
+        Throwable current = error;
+        int depth = 0;
+        while (current != null && depth++ < 8) {
+            if (builder.length() > 0) builder.append(" <- ");
+            builder.append(current.getClass().getName());
+            if (!TextUtils.isEmpty(current.getMessage())) builder.append(": ").append(current.getMessage());
+            current = current.getCause();
+        }
+        return builder.toString();
+    }
+
+    public interface Callback {
+
+        void onPrepare();
+
+        void onTracksChanged();
+
+        void onTitlesChanged();
+
+        void onError(String msg);
+
+        void onReload(String msg);
+
+        void onPlayerRebuild(Player newPlayer, boolean resetVideoSurface);
+    }
+
+    private final Player.Listener listener = new Player.Listener() {
+
+        @Override
+        public void onIsPlayingChanged(boolean isPlaying) {
+            liveDanmakuPlaybackActive = isPlaying;
+            if (!isPlaying) discardLiveDanmakuPending();
+        }
+
+        @Override
+        public void onPlaybackStateChanged(int state) {
+            if (state != Player.STATE_IDLE) App.removeCallbacks(runnable);
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "state=%s spec=%s", stateName(state), debugSpec());
+            if (state == Player.STATE_READY) {
+                playbackTrace.mark(PlaybackTrace.Stage.READY, "player=" + playerType);
+                markStartupCompletion(true, getCurrentTracks());
+                hardDecodeSwitchRetryArmed = false;
+                clearLutWarmupRecovery();
+                applyLutForCurrentItem();
+            }
+            recordBufferingState(state);
+        }
+
+        @Override
+        public void onVideoSizeChanged(@NonNull VideoSize size) {
+            videoSize = size;
+            applyLutForCurrentItem();
+            scheduleMpvAutoOutputEvaluation();
+        }
+
+        @Override
+        public void onTracksChanged(@NonNull Tracks tracks) {
+            if (!tracks.isEmpty() && !initTrack) {
+                playbackTrace.mark(PlaybackTrace.Stage.TRACKS, trackSummary(tracks));
+                restoreTrackSelection(Track.find(getKey()));
+                callback.onTracksChanged();
+                initTrack = true;
+            }
+            markStartupCompletion(player != null && player.getPlaybackState() == Player.STATE_READY, tracks);
+            applyLutForCurrentItem();
+            scheduleMpvAutoOutputEvaluation();
+        }
+
+        @Override
+        public void onRenderedFirstFrame() {
+            playbackTrace.mark(PlaybackTrace.Stage.FIRST_FRAME, "source=media3 player=" + playerType);
+        }
+
+        @Override
+        public void onMediaEditionsChanged(@NonNull List<MediaEdition> editions) {
+            callback.onTitlesChanged();
+        }
+
+        @Override
+        public void onPlayerError(@NonNull PlaybackException e) {
+            App.removeCallbacks(runnable);
+            if (retryMpvSurfaceDirectFailure(e)) return;
+            PlaybackErrorClassifier.Failure failure = PlaybackErrorClassifier.classify(e, getEffectivePlaybackRoute());
+            PlayerEngine.ErrorAction action = engine.handleError(e);
+            PlaybackTrace.log("playback-error", playbackTrace.current(), "%s action=%s player=%d decode=%d", failure.logSummary(), action, playerType, engine.getDecode());
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "error code=%d message=%s action=%s retry=%d spec=%s cause=%s", e.errorCode, e.getMessage(), action, retry, debugSpec(), causeChain(e));
+            LocalProxyDebug.dumpIfLocalFailure(spec == null ? null : spec.getUrl(), e);
+            if (retryLutFailure(e)) return;
+            if (retryLutWarmupByRefresh(action, e)) return;
+            if (action == PlayerEngine.ErrorAction.DECODE && retryHardDecodeSwitch(e)) return;
+            if (action == PlayerEngine.ErrorAction.FATAL && retryLocalProxy(e)) return;
+            if (action == PlayerEngine.ErrorAction.RELOAD) {
+                callback.onReload(getPlaybackErrorMessage(failure));
+                return;
+            }
+            if (action == PlayerEngine.ErrorAction.RECOVERED) {
+                if (spec != null) setDanmakus(spec.getDanmakus());
+                return;
+            }
+            callback.onError(getPlaybackErrorMessage(failure));
+        }
+    };
+
+    private PlaybackRoute.Resolution getEffectivePlaybackRoute() {
+        PlaybackRoute.Resolution route = engine == null ? null : engine.getEffectivePlaybackRoute();
+        if (route != null && route.route() != PlaybackRoute.OTHER) return route;
+        return spec == null ? PlaybackRoute.resolve(null) : spec.getPlaybackRoute();
+    }
+
+    private String getPlaybackErrorMessage(PlaybackErrorClassifier.Failure failure) {
+        return switch (failure.stage()) {
+            case LOCAL_ENDPOINT -> switch (failure.route().owner()) {
+                case APP_MAIN_SERVER, APP_HLS_PROXY -> ResUtil.getString(R.string.error_play_stage_app_local);
+                default -> ResUtil.getString(R.string.error_play_stage_external_local);
+            };
+            case NETWORK_IO -> PlaybackRouteCapabilities.resolve(failure.route()).externalUpstreamOpaque()
+                    ? ResUtil.getString(R.string.error_play_stage_external_supply)
+                    : ResUtil.getString(R.string.error_play_stage_network);
+            case MEDIA_PARSING -> ResUtil.getString(R.string.error_play_stage_media);
+            case DECODER -> ResUtil.getString(R.string.error_play_stage_decoder);
+            case OUTPUT -> ResUtil.getString(R.string.error_play_stage_output);
+            case DRM -> ResUtil.getString(R.string.error_play_stage_drm);
+            case UNKNOWN -> ResUtil.getString(R.string.error_play_stage_unknown);
+        };
+    }
+
+    private boolean retryHardDecodeSwitch(PlaybackException e) {
+        if (!hardDecodeSwitchRetryArmed || engine == null || player == null || spec == null || !engine.isHard()) return false;
+        if (e.errorCode != PlaybackException.ERROR_CODE_DECODER_INIT_FAILED && e.errorCode != PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED && e.errorCode != PlaybackException.ERROR_CODE_DECODING_FAILED) return false;
+        hardDecodeSwitchRetryArmed = false;
+        int seq = ++prepareSeq;
+        PlaySpec target = spec;
+        long position = Math.max(0, getPosition());
+        float speed = getSpeed();
+        boolean repeat = isRepeatOne();
+        boolean wasPlayWhenReady = player.getPlayWhenReady();
+        App.removeCallbacks(runnable);
+        resetLutRuntimeState("hard_decode_switch_retry", true);
+        engine.release();
+        engine = buildEngine(playerType, PlayerEngine.HARD);
+        player = engine.getPlayer();
+        callback.onPlayerRebuild(player, true);
+        this.playWhenReady = wasPlayWhenReady;
+        initTrack = false;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "hard decode switch retry delay=%d position=%d spec=%s cause=%s", HARD_DECODE_SWITCH_RETRY_DELAY_MS, position, debugSpec(), causeChain(e));
+        App.post(() -> {
+            if (seq != prepareSeq || spec != target || engine == null || player == null || !engine.isHard()) return;
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "hard decode switch retry start position=%d spec=%s", position, debugSpec());
+            setDanmakus(target.getDanmakus());
+            initTrack = false;
+            waitingLutBeforePlay = false;
+            applySubtitleStyle();
+            engine.start(target.checkUa(), position, wasPlayWhenReady);
+            scheduleMpvAutoOutputEvaluation();
+            if (speed != 1f) setSpeed(speed);
+            setRepeatOne(repeat);
+            App.post(runnable, Constant.TIMEOUT_PLAY);
+            callback.onPrepare();
+        }, HARD_DECODE_SWITCH_RETRY_DELAY_MS);
+        return true;
+    }
+
+    private boolean retryLutFailure(PlaybackException e) {
+        if (!LutSetting.isEnabled()) return false;
+        if (e.errorCode != PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED && e.errorCode != PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSOR_INIT_FAILED) return false;
+        App.removeCallbacks(runnable);
+        LutSetting.select(null);
+        lutAppliedForItem = true;
+        lutApplyInProgress = false;
+        pendingLutPreview = false;
+        lutWarmupReloadPreviewPending = false;
+        clearVideoEffects("lut_error_retry");
+        Notify.show(R.string.lut_apply_failed);
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("lut", "disable and retry after frame processing error code=%d spec=%s cause=%s", e.errorCode, debugSpec(), causeChain(e));
+        if (spec != null) setMediaItem();
+        return true;
+    }
+
+    private boolean retryLocalProxy(PlaybackException e) {
+        if (spec == null || !LocalProxyDebug.isLocalProxyUrl(spec.getUrl())) return false;
+        if (!LocalProxyDebug.isConnectionRefused(e)) return false;
+        if (++localProxyRetry > LOCAL_PROXY_MAX_RETRY) return false;
+        int attempt = localProxyRetry;
+        if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "local proxy retry schedule attempt=%d delay=%d spec=%s", attempt, LOCAL_PROXY_RETRY_DELAY_MS, debugSpec());
+        App.removeCallbacks(runnable);
+        App.post(() -> {
+            if (spec == null || attempt != localProxyRetry) return;
+            if (SpiderDebug.isEnabled()) SpiderDebug.log("player", "local proxy retry start attempt=%d spec=%s", attempt, debugSpec());
+            setMediaItem();
+        }, LOCAL_PROXY_RETRY_DELAY_MS);
+        return true;
+    }
+
+}

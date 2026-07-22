@@ -33,9 +33,15 @@ installer/out/
 *.p12
 *.jks
 keystore.properties
+.secrets/
 volumes/
 
 # Android local tool paths and generated output
 android/.gradle/
 android/local.properties
 android/**/build/
+android-fish2018/.gradle/
+android-fish2018/local.properties
+android-fish2018/**/build/
+android-fish2018/Release/
+android-fish2018/serverless/**/dist/
