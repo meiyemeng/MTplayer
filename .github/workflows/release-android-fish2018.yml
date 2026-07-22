@@ -26,7 +26,7 @@ jobs:
           python-version: '3.10'
       - uses: android-actions/setup-android@v3
       - name: Install Android SDK
-        run: sdkmanager "platforms;android-37" "build-tools;37.0.0"
+        run: sdkmanager --channel=3 "platforms;android-37" "build-tools;37.0.0"
       - name: Configure release signing
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
