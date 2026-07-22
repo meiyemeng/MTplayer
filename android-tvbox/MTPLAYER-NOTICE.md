@@ -1,4 +1,4 @@
-# MT Player Android notice
+# MT Player Android notice (v1.3.3)
 
 This directory contains the MT Player Android client, derived from
 [IsayIsee/TVBoxOS](https://github.com/IsayIsee/TVBoxOS).

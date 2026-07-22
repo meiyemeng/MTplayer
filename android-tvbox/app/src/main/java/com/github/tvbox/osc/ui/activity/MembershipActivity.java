@@ -69,7 +69,7 @@ public class MembershipActivity extends BaseActivity {
                 if (liveCount++ == 0) Hawk.put(HawkConfig.LIVE_API_URL, address);
             }
             String version = string(push, "androidVersion"), url = string(push, "androidDownloadUrl");
-            if (!version.isEmpty() && !url.isEmpty() && newer(version, "1.3.2")) { updateName = version; updateUrl = url; }
+            if (!version.isEmpty() && !url.isEmpty() && newer(version, "1.3.3")) { updateName = version; updateUrl = url; }
         }
         final int configs = sourceCount, lives = liveCount; final String note = message, latest = updateName, download = updateUrl;
         runOnUiThread(() -> {

@@ -1,6 +1,6 @@
-# Android 客户端：TVBoxOS 原生基础（v1.3.2）
+# Android 客户端：TVBoxOS 原生基础（v1.3.3）
 
-从 v1.3.2 起，MT播放器 Android 客户端的正式基础为
+从 v1.3.3 起，MT播放器 Android 客户端的正式基础为
 `android-tvbox/`，而非旧的 Compose 原型目录 `android/`。
 
 它直接基于 IsayIsee/TVBoxOS 的原生配置解析、JAR Spider、JS Spider、
