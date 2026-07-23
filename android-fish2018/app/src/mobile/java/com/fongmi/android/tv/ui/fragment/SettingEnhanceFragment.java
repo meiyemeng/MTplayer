@@ -1,7 +1,5 @@
 package com.fongmi.android.tv.ui.fragment;
 
-import android.content.Intent;
-import android.net.Uri;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -43,9 +41,6 @@ import com.google.gson.JsonObject;
 
 public class SettingEnhanceFragment extends BaseFragment {
 
-    private static final String URL_GITHUB = "https://github.com/fish2018/webhtv";
-    private static final String URL_CNB = "https://cnb.cool/fish2035/ext";
-
     private FragmentSettingEnhanceBinding mBinding;
 
     public static SettingEnhanceFragment newInstance() {
@@ -69,17 +64,6 @@ public class SettingEnhanceFragment extends BaseFragment {
 
     @Override
     protected void initEvent() {
-        mBinding.toolbar.setOnMenuItemClickListener(item -> {
-            if (item.getItemId() == R.id.githubRepo) {
-                openRepo(URL_GITHUB);
-                return true;
-            }
-            if (item.getItemId() == R.id.cnbRepo) {
-                openRepo(URL_CNB);
-                return true;
-            }
-            return false;
-        });
         mBinding.driveCheck.setOnClickListener(this::setDriveCheck);
         mBinding.debugLog.setOnClickListener(this::setDebugLog);
         mBinding.siteHealthSort.setOnClickListener(view -> SiteHealthDialog.show(this, this::setText));
@@ -256,14 +240,6 @@ public class SettingEnhanceFragment extends BaseFragment {
         WebHomeExtensionRegistry.get().clear();
         Notify.show(R.string.web_home_extension_clear_done);
         return true;
-    }
-
-    private void openRepo(String url) {
-        try {
-            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
-        } catch (Exception e) {
-            Notify.show(R.string.manage_page_no_browser);
-        }
     }
 
     @Override
