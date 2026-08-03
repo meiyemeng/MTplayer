@@ -38,6 +38,14 @@ public sealed record WebCatalogueRequest(IReadOnlyList<WebSiteDto> Sites, string
 public sealed record WebDetailRequest(WebSiteDto Site, string Id);
 public sealed record WebPlayRequest(WebSiteDto Site, string Flag, string Id);
 public sealed record WebSignRequest(string Url);
+file sealed record GatewayLiveResponse(IReadOnlyList<GatewayLiveChannel> Channels);
+file sealed record GatewayLiveChannel(
+    string Name,
+    string Group,
+    string Address,
+    string? LogoAddress,
+    string? EpgAddress,
+    IReadOnlyDictionary<string, string>? Headers);
 public sealed record WebEpisodeDto(
     string Name,
     string Url,
@@ -61,18 +69,34 @@ public sealed class WebProxySigner(IConfiguration configuration)
     private readonly byte[] _key = Convert.FromBase64String(
         configuration["DATA_ENCRYPTION_KEY"] ?? throw new InvalidOperationException("DATA_ENCRYPTION_KEY is required."));
 
-    public string Sign(string address, string kind, TimeSpan? lifetime = null)
+    public string Sign(
+        string address,
+        string kind,
+        TimeSpan? lifetime = null,
+        IReadOnlyDictionary<string, string>? headers = null)
     {
         var expires = DateTimeOffset.UtcNow.Add(lifetime ?? TimeSpan.FromHours(8)).ToUnixTimeSeconds();
-        var payload = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes($"{kind}\n{expires}\n{address}"));
+        var headerJson = headers is { Count: > 0 }
+            ? WebEncoders.Base64UrlEncode(JsonSerializer.SerializeToUtf8Bytes(headers))
+            : string.Empty;
+        var payload = WebEncoders.Base64UrlEncode(
+            Encoding.UTF8.GetBytes($"{kind}\n{expires}\n{address}\n{headerJson}"));
         using var hmac = new HMACSHA256(_key);
         var signature = WebEncoders.Base64UrlEncode(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
         return $"{payload}.{signature}";
     }
 
-    public bool TryRead(string token, string kind, out Uri? address)
+    public bool TryRead(string token, string kind, out Uri? address) =>
+        TryRead(token, kind, out address, out _);
+
+    public bool TryRead(
+        string token,
+        string kind,
+        out Uri? address,
+        out IReadOnlyDictionary<string, string> headers)
     {
         address = null;
+        headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var parts = (token ?? string.Empty).Split('.', 2);
         if (parts.Length != 2) return false;
         using var hmac = new HMACSHA256(_key);
@@ -83,11 +107,24 @@ public sealed class WebProxySigner(IConfiguration configuration)
         if (!CryptographicOperations.FixedTimeEquals(expected, actual)) return false;
 
         string[] values;
-        try { values = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(parts[0])).Split('\n', 3); }
+        try { values = Encoding.UTF8.GetString(WebEncoders.Base64UrlDecode(parts[0])).Split('\n', 4); }
         catch (FormatException) { return false; }
-        return values.Length == 3 && values[0] == kind &&
-               long.TryParse(values[1], out var expires) && expires >= DateTimeOffset.UtcNow.ToUnixTimeSeconds() &&
-               Uri.TryCreate(values[2], UriKind.Absolute, out address) && WebClientGateway.IsHttp(address);
+        if (values.Length is not (3 or 4) || values[0] != kind ||
+            !long.TryParse(values[1], out var expires) || expires < DateTimeOffset.UtcNow.ToUnixTimeSeconds() ||
+            !Uri.TryCreate(values[2], UriKind.Absolute, out address) || !WebClientGateway.IsHttp(address))
+            return false;
+        if (values.Length == 4 && values[3].Length > 0)
+        {
+            try
+            {
+                headers = JsonSerializer.Deserialize<Dictionary<string, string>>(
+                              WebEncoders.Base64UrlDecode(values[3])) ??
+                          new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            }
+            catch (JsonException) { return false; }
+            catch (FormatException) { return false; }
+        }
+        return true;
     }
 }
 
@@ -118,22 +155,45 @@ public sealed class WebClientGateway
     }
     public async Task<WebConfigResponse> InspectAsync(WebConfigRequest request, CancellationToken cancellationToken)
     {
+        var address = RequireAddress(request.Url);
+        var warnings = new List<string>();
+        var gatewayReady = false;
+        if (SpiderGatewayConfigured)
+        {
+            try
+            {
+                await InitializeGatewayAsync(address, cancellationToken);
+                gatewayReady = true;
+            }
+            catch (Exception exception) when (exception is HttpRequestException or IOException or TaskCanceledException)
+            {
+                warnings.Add($"Android Spider Gateway 暂时不可用：{exception.Message}");
+            }
+        }
         if (request.GroupId == Guid.Empty) throw new ArgumentException("配置源标识无效。");
         var sites = new Dictionary<string, WebSiteDto>(StringComparer.Ordinal);
         var lives = new Dictionary<string, WebLiveDto>(StringComparer.OrdinalIgnoreCase);
-        var warnings = new List<string>();
         var counters = new InspectionCounters();
         await InspectCoreAsync(
             request.GroupId.ToString("N"),
-            RequireAddress(request.Url),
+            address,
             0,
+            gatewayReady,
             sites,
             lives,
             warnings,
             counters,
             cancellationToken);
+        if (gatewayReady)
+        {
+            var importedLives = await AddGatewayLivesAsync(lives, warnings, cancellationToken);
+            if (importedLives > 0)
+                warnings.RemoveAll(value =>
+                    value.Contains("直播源", StringComparison.Ordinal) &&
+                    value.Contains("内网", StringComparison.Ordinal));
+        }
         if (counters.RuntimeRequired > 0)
-            warnings.Insert(0, SpiderGatewayConfigured
+            warnings.Insert(0, gatewayReady
                 ? $"共识别 {counters.Detected} 个站点；{counters.RuntimeRequired} 个 JAR/CSP 站点已接入 Android Spider Gateway。"
                 : $"共识别 {counters.Detected} 个站点；其中 {sites.Count} 个 HTTP 站点可直接运行，{counters.RuntimeRequired} 个 JAR/CSP 站点需配置 Android Spider Gateway。");
         return new WebConfigResponse(sites.Values.ToArray(), lives.Values.ToArray(), warnings, counters.Detected, counters.RuntimeRequired);
@@ -183,7 +243,8 @@ public sealed class WebClientGateway
 
     public async Task<WebDetailDto> DetailAsync(WebDetailRequest request, CancellationToken cancellationToken)
     {
-        var site = NormalizeSites([request.Site]).Single();
+        var site = NormalizeSites([request.Site]).SingleOrDefault()
+            ?? throw new ArgumentException($"站点“{request.Site}”不可用或未配置。");
         if (IsCsp(site))
         {
             var spiderDetail = TvBoxJsonResultParser.ParseDetail(
@@ -214,7 +275,8 @@ public sealed class WebClientGateway
 
     public async Task<WebEpisodeDto> PlayAsync(WebPlayRequest request, CancellationToken cancellationToken)
     {
-        var site = NormalizeSites([request.Site]).Single();
+        var site = NormalizeSites([request.Site]).SingleOrDefault()
+            ?? throw new ArgumentException($"站点“{request.Site}”不可用或未配置。");
         if (!IsCsp(site))
             return new WebEpisodeDto(string.Empty, SignMedia(request.Id), LooksLikeHls(request.Id));
         var json = await InvokeSpiderAsync("player", site, new { flag = request.Flag, id = request.Id }, cancellationToken);
@@ -225,22 +287,30 @@ public sealed class WebClientGateway
         var requiresParser = root.TryGetProperty("parse", out var parse) &&
                              ((parse.ValueKind == JsonValueKind.Number && parse.TryGetInt32(out var parseValue) && parseValue != 0) ||
                               (parse.ValueKind == JsonValueKind.String && parse.GetString() is not (null or "" or "0")));
+        var headers = ReadHeaders(root);
         return requiresParser
             ? new WebEpisodeDto(string.Empty, url, false, false, true)
-            : new WebEpisodeDto(string.Empty, SignMedia(url), LooksLikeHls(url));
+            : new WebEpisodeDto(string.Empty, SignMedia(url, headers), LooksLikeHls(url));
     }
 
-    public string SignMedia(string address) => ProxyUrl(RequireAddress(address).ToString(), "media", TimeSpan.FromHours(12));
+    public string SignMedia(string address, IReadOnlyDictionary<string, string>? headers = null) =>
+        ProxyUrl(RequireAddress(address).ToString(), "media", TimeSpan.FromHours(12), headers);
 
     public async Task ProxyAsync(HttpContext context, string kind, string token, CancellationToken cancellationToken)
     {
-        if (kind is not ("image" or "media") || !signer.TryRead(token, kind, out var address) || address is null)
+        if (kind is not ("image" or "media") ||
+            !signer.TryRead(token, kind, out var address, out var headers) ||
+            address is null)
         {
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
             return;
         }
 
-        using var response = await SendAsync(address, context.Request.Headers.Range.ToString(), cancellationToken);
+        using var response = await SendAsync(
+            address,
+            context.Request.Headers.Range.ToString(),
+            cancellationToken,
+            headers);
         if (!response.IsSuccessStatusCode)
         {
             context.Response.StatusCode = (int)response.StatusCode;
@@ -254,10 +324,22 @@ public sealed class WebClientGateway
                 throw new InvalidDataException("播放清单超过 4 MiB。");
             var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
             if (bytes.Length > MaximumManifestBytes) throw new InvalidDataException("播放清单过大。");
-            var text = RewriteManifest(Encoding.UTF8.GetString(bytes), address);
-            context.Response.ContentType = "application/vnd.apple.mpegurl; charset=utf-8";
-            context.Response.Headers.CacheControl = "no-store";
-            await context.Response.WriteAsync(text, cancellationToken);
+            var body = Encoding.UTF8.GetString(bytes);
+            if (LooksLikeHlsManifest(body))
+            {
+                var text = RewriteManifest(body, address, headers);
+                context.Response.ContentType = "application/vnd.apple.mpegurl; charset=utf-8";
+                context.Response.Headers.CacheControl = "no-store";
+                await context.Response.WriteAsync(text, cancellationToken);
+            }
+            else
+            {
+                context.Response.StatusCode = (int)response.StatusCode;
+                context.Response.ContentType = contentType;
+                context.Response.Headers.CacheControl = "no-store";
+                context.Response.ContentLength = bytes.Length;
+                await context.Response.Body.WriteAsync(bytes, cancellationToken);
+            }
             return;
         }
 
@@ -274,6 +356,7 @@ public sealed class WebClientGateway
         string groupKey,
         Uri address,
         int depth,
+        bool gatewayReady,
         Dictionary<string, WebSiteDto> sites,
         Dictionary<string, WebLiveDto> lives,
         List<string> warnings,
@@ -301,7 +384,7 @@ public sealed class WebClientGateway
             if (site.Type == 3 && site.Api.StartsWith("csp_", StringComparison.OrdinalIgnoreCase))
             {
                 counters.RuntimeRequired++;
-                if (SpiderGatewayConfigured)
+                if (gatewayReady)
                 {
                     var jar = ResolveDecoratedAddress(address, site.Jar ?? parsed.Profile.Spider);
                     if (!string.IsNullOrWhiteSpace(jar))
@@ -332,7 +415,7 @@ public sealed class WebClientGateway
         foreach (var depot in parsed.Profile.Urls)
         {
             if (!Uri.TryCreate(address, depot.Url, out var childAddress) || !IsHttp(childAddress)) continue;
-            await InspectCoreAsync($"{groupKey}:g{++child}", childAddress, depth + 1, sites, lives, warnings, counters, cancellationToken);
+            await InspectCoreAsync($"{groupKey}:g{++child}", childAddress, depth + 1, gatewayReady, sites, lives, warnings, counters, cancellationToken);
         }
     }
 
@@ -370,13 +453,17 @@ public sealed class WebClientGateway
         return TvBoxJsonResultParser.ParsePage(site.Key, await response.Content.ReadAsStringAsync(cancellationToken));
     }
 
-    private async Task<HttpResponseMessage> SendAsync(Uri address, string? range, CancellationToken cancellationToken)
+    private async Task<HttpResponseMessage> SendAsync(
+        Uri address,
+        string? range,
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string>? headers = null)
     {
         var current = address;
         for (var redirect = 0; redirect <= 5; redirect++)
         {
-            await EnsurePublicAsync(current, cancellationToken);
-            var response = await SendWithRetryAsync(current, range, cancellationToken);
+            if (!IsTrustedSpiderAddress(current)) await EnsurePublicAsync(current, cancellationToken);
+            var response = await SendWithRetryAsync(current, range, headers, cancellationToken);
             if ((int)response.StatusCode is >= 300 and < 400 && response.Headers.Location is { } location)
             {
                 response.Dispose();
@@ -391,6 +478,7 @@ public sealed class WebClientGateway
     private async Task<HttpResponseMessage> SendWithRetryAsync(
         Uri address,
         string? range,
+        IReadOnlyDictionary<string, string>? headers,
         CancellationToken cancellationToken)
     {
         for (var attempt = 0; ; attempt++)
@@ -398,8 +486,22 @@ public sealed class WebClientGateway
             using var request = new HttpRequestMessage(HttpMethod.Get, address);
             if (!string.IsNullOrWhiteSpace(range) && RangeHeaderValue.TryParse(range, out var parsedRange))
                 request.Headers.Range = parsedRange;
-            request.Headers.Referrer = address.Host.EndsWith("doubanio.com", StringComparison.OrdinalIgnoreCase)
-                ? new Uri("https://movie.douban.com/") : null;
+            if (headers is not null)
+            {
+                foreach (var pair in headers)
+                {
+                    if (string.IsNullOrWhiteSpace(pair.Key) || string.IsNullOrWhiteSpace(pair.Value) ||
+                        pair.Key.Equals("Host", StringComparison.OrdinalIgnoreCase) ||
+                        pair.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase) ||
+                        pair.Key.Equals("Connection", StringComparison.OrdinalIgnoreCase) ||
+                        pair.Key.Equals("Range", StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    request.Headers.TryAddWithoutValidation(pair.Key, pair.Value);
+                }
+            }
+            if (request.Headers.Referrer is null &&
+                address.Host.EndsWith("doubanio.com", StringComparison.OrdinalIgnoreCase))
+                request.Headers.Referrer = new Uri("https://movie.douban.com/");
             // A retry must use a fresh connection. Some Cloudflare edges reset a
             // pooled connection without sending an HTTP response.
             request.Headers.ConnectionClose = attempt > 0;
@@ -438,10 +540,17 @@ public sealed class WebClientGateway
             item.TypeName);
     }
 
-    private string ProxyUrl(string address, string kind, TimeSpan lifetime) =>
-        $"/api/v1/web/proxy/{kind}?token={Uri.EscapeDataString(signer.Sign(address, kind, lifetime))}";
+    private string ProxyUrl(
+        string address,
+        string kind,
+        TimeSpan lifetime,
+        IReadOnlyDictionary<string, string>? headers = null) =>
+        $"/api/v1/web/proxy/{kind}?token={Uri.EscapeDataString(signer.Sign(address, kind, lifetime, headers))}";
 
-    private string RewriteManifest(string manifest, Uri baseAddress)
+    private string RewriteManifest(
+        string manifest,
+        Uri baseAddress,
+        IReadOnlyDictionary<string, string>? headers)
     {
         var lines = manifest.Replace("\r\n", "\n").Split('\n');
         for (var i = 0; i < lines.Length; i++)
@@ -451,14 +560,15 @@ public sealed class WebClientGateway
             if (!line.StartsWith('#'))
             {
                 var segment = new Uri(baseAddress, line);
-                if (IsHttp(segment)) lines[i] = ProxyUrl(segment.ToString(), "media", TimeSpan.FromHours(12));
+                if (IsHttp(segment))
+                    lines[i] = ProxyUrl(segment.ToString(), "media", TimeSpan.FromHours(12), headers);
                 continue;
             }
             lines[i] = Regex.Replace(lines[i], "URI=\"([^\"]+)\"", match =>
             {
                 var resource = new Uri(baseAddress, match.Groups[1].Value);
                 return IsHttp(resource)
-                    ? $"URI=\"{ProxyUrl(resource.ToString(), "media", TimeSpan.FromHours(12))}\""
+                    ? $"URI=\"{ProxyUrl(resource.ToString(), "media", TimeSpan.FromHours(12), headers)}\""
                     : match.Value;
             });
         }
@@ -505,6 +615,91 @@ public sealed class WebClientGateway
             throw new HttpRequestException($"Android Spider Gateway 返回 HTTP {(int)response.StatusCode}：{content}", null, response.StatusCode);
         return content;
     }
+
+    private async Task<int> AddGatewayLivesAsync(
+        Dictionary<string, WebLiveDto> lives,
+        List<string> warnings,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(_spiderGateway!, "/v1/spider/live"));
+            message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _spiderGatewayToken);
+            message.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+            using var response = await http.SendAsync(message, cancellationToken);
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException(
+                    $"Android Spider Gateway 返回 HTTP {(int)response.StatusCode}：{content}",
+                    null,
+                    response.StatusCode);
+            var result = JsonSerializer.Deserialize<GatewayLiveResponse>(content, GatewayJsonOptions);
+            var count = 0;
+            foreach (var channel in result?.Channels ?? [])
+            {
+                if (string.IsNullOrWhiteSpace(channel.Name) ||
+                    !TryResolveGatewayMediaAddress(channel.Address, out var address))
+                    continue;
+                var logo = TryResolveGatewayMediaAddress(channel.LogoAddress, out var logoAddress)
+                    ? ProxyUrl(logoAddress.ToString(), "image", TimeSpan.FromHours(24))
+                    : null;
+                AddLive(lives, new WebLiveDto(
+                    channel.Name.Trim(),
+                    ProxyUrl(address.ToString(), "media", TimeSpan.FromHours(12), channel.Headers),
+                    channel.EpgAddress,
+                    string.IsNullOrWhiteSpace(channel.Group) ? "直播" : channel.Group.Trim(),
+                    logo));
+                count++;
+            }
+            return count;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException or JsonException)
+        {
+            warnings.Add($"Android Spider Gateway 直播读取失败：{exception.Message}");
+            return 0;
+        }
+    }
+
+    private bool TryResolveGatewayMediaAddress(string? value, out Uri address)
+    {
+        address = null!;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        if (Uri.TryCreate(value, UriKind.Absolute, out var absolute) && IsHttp(absolute))
+        {
+            address = absolute;
+            return true;
+        }
+        if (_spiderGateway is null ||
+            !value.StartsWith("/v1/spider/native/", StringComparison.Ordinal) ||
+            !Uri.TryCreate(_spiderGateway, value, out var resolved) ||
+            !IsTrustedSpiderAddress(resolved))
+            return false;
+        address = resolved;
+        return true;
+    }
+
+    private async Task InitializeGatewayAsync(Uri address, CancellationToken cancellationToken)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(_spiderGateway!, "/v1/spider/config"));
+        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _spiderGatewayToken);
+        message.Content = new StringContent(
+            JsonSerializer.Serialize(new { url = address.ToString(), name = address.Host }, GatewayJsonOptions),
+            Encoding.UTF8,
+            "application/json");
+        using var response = await http.SendAsync(message, cancellationToken);
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException(
+                $"Android Spider Gateway 初始化失败（HTTP {(int)response.StatusCode}）：{content}",
+                null,
+                response.StatusCode);
+    }
+
+    private bool IsTrustedSpiderAddress(Uri address) =>
+        _spiderGateway is not null &&
+        string.Equals(address.Scheme, _spiderGateway.Scheme, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(address.Host, _spiderGateway.Host, StringComparison.OrdinalIgnoreCase) &&
+        address.Port == _spiderGateway.Port;
 
     private static string? ResolveDecoratedAddress(Uri configurationAddress, string? value)
     {
@@ -618,14 +813,17 @@ public sealed class WebClientGateway
         CancellationToken cancellationToken)
     {
 
-        if (LooksLikeDirectLiveMedia(liveAddress))
-        {
-            AddLive(lives, new WebLiveDto(sourceName, liveAddress, epgTemplate, sourceName, logoTemplate));
-            return;
-        }
-
         try
         {
+            // A direct media URL (e.g. *.m3u8) is a single playable channel. Parsing it
+            // happens inside the try so a malformed address becomes a warning instead of
+            // a 500 from an unhandled UriFormatException.
+            if (LooksLikeDirectLiveMedia(liveAddress))
+            {
+                AddLive(lives, new WebLiveDto(sourceName, liveAddress, epgTemplate, sourceName, logoTemplate));
+                return;
+            }
+
             var address = new Uri(liveAddress);
             using var response = await SendAsync(address, null, cancellationToken);
             response.EnsureSuccessStatusCode();
@@ -653,7 +851,7 @@ public sealed class WebClientGateway
         }
         catch (Exception exception) when (
             !cancellationToken.IsCancellationRequested &&
-            exception is HttpRequestException or InvalidDataException or TaskCanceledException or ArgumentException)
+            exception is HttpRequestException or InvalidDataException or TaskCanceledException or ArgumentException or FormatException)
         {
             if (warnings.Count < 20)
             {
@@ -666,6 +864,22 @@ public sealed class WebClientGateway
         value.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String
             ? property.GetString()
             : null;
+
+    private static Dictionary<string, string> ReadHeaders(JsonElement value)
+    {
+        if (!value.TryGetProperty("header", out var header) || header.ValueKind != JsonValueKind.Object)
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in header.EnumerateObject())
+        {
+            var text = property.Value.ValueKind == JsonValueKind.String
+                ? property.Value.GetString()
+                : property.Value.ToString();
+            if (!string.IsNullOrWhiteSpace(property.Name) && !string.IsNullOrWhiteSpace(text))
+                result[property.Name] = text;
+        }
+        return result;
+    }
 
     private static bool TryReadLivePlaylistAddress(string? value, out string address)
     {
@@ -850,9 +1064,23 @@ public sealed class WebClientGateway
 
     public static bool IsHttp(Uri value) => value.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
                                              value.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
-    private static bool LooksLikeHls(string value) => value.Split('?', 2)[0].EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase);
-    private static bool IsManifest(Uri address, string contentType) => LooksLikeHls(address.ToString()) ||
-        contentType.Contains("mpegurl", StringComparison.OrdinalIgnoreCase);
+    private static bool LooksLikeHls(string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var address)) return false;
+        return address.AbsolutePath.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase) ||
+               address.AbsolutePath.Contains("m3u8", StringComparison.OrdinalIgnoreCase) ||
+               Uri.UnescapeDataString(address.Query).Contains(".m3u8", StringComparison.OrdinalIgnoreCase);
+    }
+    private static bool IsManifest(Uri address, string contentType)
+    {
+        if (contentType.Contains("mpegurl", StringComparison.OrdinalIgnoreCase)) return true;
+        if (contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+            contentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase) ||
+            contentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) ||
+            contentType.Contains("octet-stream", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return LooksLikeHls(address.ToString());
+    }
     private static string GuessContentType(Uri address) => Path.GetExtension(address.AbsolutePath).ToLowerInvariant() switch
     {
         ".m3u8" => "application/vnd.apple.mpegurl", ".ts" => "video/mp2t", ".mp4" => "video/mp4",

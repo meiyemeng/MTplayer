@@ -22,6 +22,8 @@ test-results/
 # Publish and installer outputs
 publish/
 installer/out/
+release-builds/
+releases/
 
 # Local brainstorming and agent state
 .superpowers/
