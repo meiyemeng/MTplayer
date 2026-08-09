@@ -185,6 +185,10 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
 
     public ObservableCollection<LiveChannel> LiveChannels { get; } = [];
 
+    public ObservableCollection<LiveChannelGroup> LiveChannelGroups { get; } = [];
+
+    public ObservableCollection<string> LiveCategories { get; } = [];
+
     public ObservableCollection<SiteOption> SiteOptions { get; } = [];
 
     public ObservableCollection<ConfigurationSourceEntry> ConfigurationSources { get; } = [];
@@ -294,7 +298,7 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
                 return;
             }
 
-            await SaveImportedConfigurationAsync(sourceText, address.Host);
+            await SaveImportedConfigurationAsync(sourceText, address.Host, address.ToString());
             LastConfigurationImportSucceeded = true;
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or ArgumentException or IOException or UnauthorizedAccessException)
@@ -844,13 +848,62 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
         var profile = await LoadCurrentProfileAsync();
         if (profile is null) { StatusMessage = "请先导入包含直播源的配置。"; return; }
         StatusMessage = $"正在读取 {profile.Lives.Count} 个直播源…";
+
         var customSources = _settings.CustomLiveSources.Select(item => new TvBoxLive { Name = item.Name, Url = item.Address });
-        var channels = await _livePlaylistService.LoadAsync(profile.Lives.Concat(customSources));
-        channels = await _livePlaylistService.EnrichWithEpgAsync(channels, _settings.CustomLiveSources.Select(item => item.EpgAddress).OfType<string>());
+        var directSources = profile.Lives
+            .Where(source => !IsAndroidLoopbackAddress(source.Url))
+            .Concat(customSources);
+        var channels = (await _livePlaylistService.LoadAsync(directSources)).ToList();
+        var epgAddresses = _settings.CustomLiveSources
+            .Select(item => item.EpgAddress)
+            .OfType<string>()
+            .ToList();
+
+        var gateway = _catalogueProviders.OfType<SpiderGatewayProvider>().FirstOrDefault();
+        string? gatewayError = null;
+        if (gateway is { IsConfigured: true })
+        {
+            try
+            {
+                var gatewayChannels = await gateway.GetLiveChannelsAsync();
+                channels.AddRange(gatewayChannels.Select(channel => new LiveChannel(
+                    channel.Group,
+                    channel.Name,
+                    channel.Url,
+                    channel.Headers,
+                    channel.LogoUrl,
+                    channel.Name)));
+                epgAddresses.AddRange(gatewayChannels.Select(channel => channel.EpgUrl).OfType<string>());
+            }
+            catch (Exception exception) when (
+                exception is HttpRequestException or InvalidDataException or JsonException or TaskCanceledException)
+            {
+                gatewayError = exception.Message;
+            }
+        }
+
+        IReadOnlyList<LiveChannel> mergedChannels = channels
+            .DistinctBy(item => $"{item.Name}\n{item.Url}", StringComparer.OrdinalIgnoreCase)
+            .Take(3000)
+            .ToArray();
+        mergedChannels = await _livePlaylistService.EnrichWithEpgAsync(mergedChannels, epgAddresses);
         LiveChannels.Clear();
-        foreach (var channel in channels) LiveChannels.Add(channel);
-        StatusMessage = channels.Count == 0 ? "没有读取到可用直播频道。" : $"已读取 {channels.Count} 个直播频道。";
+        foreach (var channel in mergedChannels) LiveChannels.Add(channel);
+        var channelGroups = LiveChannelOrganizer.GroupChannels(mergedChannels);
+        LiveChannelGroups.Clear();
+        foreach (var group in channelGroups) LiveChannelGroups.Add(group);
+        LiveCategories.Clear();
+        foreach (var category in LiveChannelOrganizer.BuildCategories(channelGroups)) LiveCategories.Add(category);
+        StatusMessage = mergedChannels.Count > 0
+            ? $"已整理为 {channelGroups.Count} 个频道，共 {mergedChannels.Count} 条播放源。"
+            : gatewayError is null
+                ? "没有读取到可用直播频道。"
+                : $"没有读取到可用直播频道；Android Spider Gateway 返回：{gatewayError}";
     }
+
+    private static bool IsAndroidLoopbackAddress(string? address) =>
+        Uri.TryCreate(address, UriKind.Absolute, out var uri) &&
+        (uri.IsLoopback || uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase));
 
     public async Task SaveSettingsAsync(AppSettings settings)
     {
@@ -1044,12 +1097,21 @@ internal sealed class ShellViewModel : INotifyPropertyChanged
         return ConfigurationImporter.Import(JsonSerializer.Serialize(mergedProfile));
     }
 
-    private async Task SaveImportedConfigurationAsync(string sourceText, string sourceName)
+    private async Task SaveImportedConfigurationAsync(
+        string sourceText,
+        string sourceName,
+        string? sourceAddress = null)
     {
         var document = ConfigurationImporter.Import(sourceText);
         document = await ExpandDepotAsync(document);
         await _configurationStore.SaveAsync(document);
         var profile = TvBoxProfileParser.Parse(document.SourceText).Profile!;
+        if (!string.IsNullOrWhiteSpace(sourceAddress))
+        {
+            var gateway = _catalogueProviders.OfType<SpiderGatewayProvider>().FirstOrDefault();
+            if (gateway is { IsConfigured: true })
+                await gateway.ConfigureProfileAsync(sourceAddress, sourceName);
+        }
         PosterWall.Clear();
         ClearTopLists();
         UpdateSiteOptions(profile);

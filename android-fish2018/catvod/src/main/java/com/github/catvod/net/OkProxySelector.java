@@ -59,7 +59,8 @@ public class OkProxySelector extends ProxySelector {
         String host = uri.getHost();
         if (proxy.isEmpty()) return fallback(uri, "no-rule");
         if (host == null) return fallback(uri, "no-host");
-        if ("127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host)) return fallback(uri, "local-target");
+        if ("127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host))
+            return List.of(java.net.Proxy.NO_PROXY);
         for (Proxy item : proxy) {
             for (String rule : item.getHosts()) {
                 if (!matches(host, rule)) continue;

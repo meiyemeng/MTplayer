@@ -75,6 +75,8 @@
 
     async function initialize() {
         bindEvents();
+        updateClock();
+        setInterval(updateClock, 30 * 1000);
         $("#default-speed").value = String(state.preferences.defaultSpeed);
         $("#default-volume").value = String(state.preferences.defaultVolume);
         $("#volume-output").textContent = `${state.preferences.defaultVolume}%`;
@@ -91,6 +93,11 @@
         }
         if (state.auth.accessToken) scheduleSync(600);
         setInterval(refreshEnabledSourcesInBackground, 20 * 60 * 1000);
+    }
+
+    function updateClock() {
+        const clock = $("#tv-clock");
+        if (clock) clock.textContent = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
     }
 
     function bindEvents() {

@@ -54,8 +54,12 @@ public partial class WebParserWindow : Window
 
         await Dispatcher.InvokeAsync(() =>
         {
-            new PlayerWindow(new PlayRequest(e.Request.Uri, _request.Flag, false, headers)).Show();
-            Close();
+            if (PlayerWindowLauncher.TryShow(
+                    this,
+                    () => new PlayerWindow(new PlayRequest(e.Request.Uri, _request.Flag, false, headers))))
+            {
+                Close();
+            }
         });
     }
 

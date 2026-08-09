@@ -1,6 +1,8 @@
 using System.Windows;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using System.Globalization;
@@ -209,8 +211,79 @@ public partial class PlayerWindow : Window, IDisposable
     }
 
     private static string FormatTime(long milliseconds) => TimeSpan.FromMilliseconds(milliseconds).ToString(milliseconds >= 3_600_000 ? @"hh\:mm\:ss" : @"mm\:ss", CultureInfo.InvariantCulture);
-    private void PositionSlider_MouseUp(object sender, MouseButtonEventArgs e) => _playback.Player.Time = (long)PositionSlider.Value;
-    private void PositionSlider_KeyUp(object sender, KeyEventArgs e) => _playback.Player.Time = (long)PositionSlider.Value;
+    private void PositionSlider_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (FindVisualParent<Thumb>(e.OriginalSource as DependencyObject) is not null)
+        {
+            return;
+        }
+
+        var track = FindVisualChild<Track>(PositionSlider);
+        var duration = Math.Max(0, _playback.Player.Length);
+        if (track is null || duration <= 0)
+        {
+            return;
+        }
+
+        var thumbWidth = track.Thumb?.ActualWidth ?? 0;
+        var seekableWidth = Math.Max(1, track.ActualWidth - thumbWidth);
+        var pointerX = e.GetPosition(track).X - (thumbWidth / 2);
+        SeekTo(PlaybackTimeline.MapPointerToPosition(pointerX, seekableWidth, duration));
+        e.Handled = true;
+    }
+
+    private void PositionSlider_MouseUp(object sender, MouseButtonEventArgs e) => SeekTo((long)PositionSlider.Value);
+    private void PositionSlider_KeyUp(object sender, KeyEventArgs e) => SeekTo((long)PositionSlider.Value);
+
+    private void SeekTo(long positionMs)
+    {
+        var duration = Math.Max(0, _playback.Player.Length);
+        if (duration <= 0)
+        {
+            return;
+        }
+
+        var target = Math.Clamp(positionMs, 0, duration);
+        _playback.Player.Time = target;
+        PositionSlider.Maximum = Math.Max(1, duration);
+        PositionSlider.Value = target;
+        CurrentTimeText.Text = FormatTime(target);
+    }
+
+    private static T? FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            if (child is T match)
+            {
+                return match;
+            }
+
+            var descendant = FindVisualChild<T>(child);
+            if (descendant is not null)
+            {
+                return descendant;
+            }
+        }
+
+        return null;
+    }
+
+    private static T? FindVisualParent<T>(DependencyObject? child) where T : DependencyObject
+    {
+        while (child is not null)
+        {
+            if (child is T match)
+            {
+                return match;
+            }
+
+            child = VisualTreeHelper.GetParent(child);
+        }
+
+        return null;
+    }
     private void PlayPause_Click(object sender, RoutedEventArgs e) { if (_playback.Player.IsPlaying) _playback.Player.Pause(); else _playback.Player.Play(); }
     private void Back10_Click(object sender, RoutedEventArgs e) => _playback.Player.Time = Math.Max(0, _playback.Player.Time - 10_000);
     private void Forward10_Click(object sender, RoutedEventArgs e) => _playback.Player.Time = Math.Min(_playback.Player.Length, _playback.Player.Time + 10_000);

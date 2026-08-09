@@ -23,6 +23,7 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Locale;
+import java.util.TimeZone;
 import java.util.UUID;
 
 /** Account, cloud backup, member resources and app updates are separate actions. */
@@ -123,8 +124,9 @@ public class MembershipActivity extends BaseActivity {
         for (JsonElement value : result) {
             if (!value.isJsonObject()) continue;
             JsonObject item = value.getAsJsonObject();
+            String id = string(item, "id");
+            if (!id.isEmpty()) client.saveVersion(id, number(item, "version"));
             if (item.has("accepted") && item.get("accepted").getAsBoolean()) {
-                client.saveVersion(string(item, "id"), number(item, "version"));
                 accepted++;
             }
         }
@@ -133,7 +135,8 @@ public class MembershipActivity extends BaseActivity {
     }
 
     private void downloadInternal() throws Exception {
-        long cursor = client.cursor();
+        // “下载云端配置”是显式恢复操作，必须从游标 0 获取完整快照。
+        long cursor = 0L;
         int applied = 0;
         while (true) {
             JsonObject page = client.syncPull(cursor);
@@ -148,6 +151,8 @@ public class MembershipActivity extends BaseActivity {
     }
 
     private boolean applyChange(JsonObject change) {
+        String id = string(change, "id");
+        if (!id.isEmpty()) client.saveVersion(id, number(change, "baseVersion"));
         if (change.has("isDeleted") && change.get("isDeleted").getAsBoolean()) return false;
         JsonObject data = change.has("payload") && change.get("payload").isJsonObject() ? change.getAsJsonObject("payload") : new JsonObject();
         String kind = string(change, "kind");
@@ -255,7 +260,11 @@ public class MembershipActivity extends BaseActivity {
     }
 
     private static String stableId(String value) { return UUID.nameUUIDFromBytes(value.getBytes(StandardCharsets.UTF_8)).toString(); }
-    private static String timestamp() { return new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US).format(new Date()); }
+    private static String timestamp() {
+        SimpleDateFormat format = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", Locale.US);
+        format.setTimeZone(TimeZone.getTimeZone("UTC"));
+        return format.format(new Date());
+    }
     private void execute(String progress, Task task) { status.setText(progress); new Thread(() -> { try { task.run(); } catch (Exception e) { show("操作失败：" + e.getMessage()); } }).start(); }
     private void show(String value) { runOnUiThread(() -> status.setText(value)); }
     private static String text(EditText value) { return value.getText().toString().trim(); }

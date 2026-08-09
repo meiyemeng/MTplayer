@@ -2,28 +2,28 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="MT播放器 · 账户与同步" Width="760" Height="720" MinWidth="680" MinHeight="620"
-        WindowStartupLocation="CenterOwner" Background="#090B0F" FontFamily="Microsoft YaHei UI"
+        WindowStartupLocation="CenterOwner" Background="Black" FontFamily="Microsoft YaHei UI"
         Loaded="Window_Loaded" Closed="Window_Closed">
   <Window.Resources>
     <Style TargetType="TextBox">
-      <Setter Property="Foreground" Value="White"/><Setter Property="Background" Value="#11151B"/><Setter Property="BorderBrush" Value="#303640"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="13,11"/><Setter Property="CaretBrush" Value="White"/>
+      <Setter Property="Foreground" Value="White"/><Setter Property="Background" Value="#66000000"/><Setter Property="BorderBrush" Value="#55FFFFFF"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="13,11"/><Setter Property="CaretBrush" Value="White"/>
     </Style>
     <Style TargetType="PasswordBox">
-      <Setter Property="Foreground" Value="White"/><Setter Property="Background" Value="#11151B"/><Setter Property="BorderBrush" Value="#303640"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="13,11"/><Setter Property="CaretBrush" Value="White"/>
+      <Setter Property="Foreground" Value="White"/><Setter Property="Background" Value="#66000000"/><Setter Property="BorderBrush" Value="#55FFFFFF"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="13,11"/><Setter Property="CaretBrush" Value="White"/>
     </Style>
     <Style x:Key="PrimaryButton" TargetType="Button">
-      <Setter Property="Foreground" Value="White"/><Setter Property="Background" Value="#EF2435"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Padding" Value="18,11"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Cursor" Value="Hand"/>
-      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="Chrome" Background="{TemplateBinding Background}" CornerRadius="9" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#FF4050"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Opacity" Value="0.42"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+      <Setter Property="Foreground" Value="White"/><Setter Property="Background" Value="#99000000"/><Setter Property="BorderBrush" Value="#55FFFFFF"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="18,11"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><Border x:Name="Chrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Chrome" Property="Background" Value="#B3000000"/><Setter TargetName="Chrome" Property="BorderBrush" Value="White"/></Trigger><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Chrome" Property="BorderBrush" Value="White"/><Setter TargetName="Chrome" Property="BorderThickness" Value="1.5"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter TargetName="Chrome" Property="Opacity" Value="0.42"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
     </Style>
-    <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}"><Setter Property="Background" Value="#242A33"/><Setter Property="FontWeight" Value="Normal"/></Style>
-    <Style x:Key="Card" TargetType="Border"><Setter Property="Background" Value="#11151B"/><Setter Property="BorderBrush" Value="#252B34"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="14"/><Setter Property="Padding" Value="22"/><Setter Property="Margin" Value="0,0,0,16"/></Style>
+    <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}"><Setter Property="Background" Value="#66000000"/><Setter Property="FontWeight" Value="Normal"/></Style>
+    <Style x:Key="Card" TargetType="Border"><Setter Property="Background" Value="#33000000"/><Setter Property="BorderBrush" Value="#44FFFFFF"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="4"/><Setter Property="Padding" Value="22"/><Setter Property="Margin" Value="0,0,0,16"/></Style>
   </Window.Resources>
   <Grid>
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
     <Border Padding="30,24" BorderBrush="#242A32" BorderThickness="0,0,0,1">
       <DockPanel>
         <Border DockPanel.Dock="Left" Width="48" Height="48" CornerRadius="12" Margin="0,0,14,0"><Image Source="Assets/mtplayer-icon.png" Stretch="Uniform"/></Border>
-        <StackPanel><TextBlock Foreground="#FF3344" FontFamily="Consolas" FontSize="11" Text="MT ACCOUNT"/><TextBlock Foreground="White" FontSize="26" FontWeight="Bold" Text="账户与同步"/><TextBlock Foreground="#8D96A4" Margin="0,5,0,0" Text="游客可本地播放；登录后同步收藏、记录和设置。"/></StackPanel>
+        <StackPanel><TextBlock Foreground="White" FontFamily="Consolas" FontSize="11" Text="MT ACCOUNT"/><TextBlock Foreground="White" FontSize="26" FontWeight="Bold" Text="账户与同步"/><TextBlock Foreground="#A6FFFFFF" Margin="0,5,0,0" Text="游客可本地播放；登录后同步收藏、记录和设置。"/></StackPanel>
       </DockPanel>
     </Border>
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">

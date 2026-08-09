@@ -17,28 +17,27 @@
 </head>
 <body>
 <div class="app-shell">
-    <aside class="sidebar" id="sidebar">
+    <header class="sidebar" id="sidebar">
         <a class="brand" href="#home" data-view="home" aria-label="MT播放器首页">
             <img src="/images/mtplayer-icon.png" alt="" />
-            <span><strong>MT播放器</strong><small>WEB CLIENT</small></span>
+            <span><strong>MT播放器</strong><small>ANDROID TV STYLE</small></span>
         </a>
         <nav class="nav-list" aria-label="主导航">
             <button class="nav-item active" data-view="home"><span>⌂</span>首页</button>
             <button class="nav-item" data-view="search"><span>⌕</span>搜索</button>
-            <button class="nav-item" data-view="favorites"><span>♡</span>我的收藏</button>
-            <button class="nav-item" data-view="history"><span>◷</span>观看记录</button>
-            <button class="nav-item" data-view="live"><span>●</span>直播频道</button>
-            <i></i>
-            <button class="nav-item" data-view="account"><span>♙</span>账户与同步</button>
+            <button class="nav-item" data-view="favorites"><span>♡</span>收藏</button>
+            <button class="nav-item" data-view="history"><span>◷</span>历史</button>
+            <button class="nav-item" data-view="live"><span>●</span>直播</button>
+            <button class="nav-item" data-view="account"><span>♙</span>同步</button>
             <button class="nav-item" data-view="settings"><span>⚙</span>设置</button>
-            <button class="nav-item" data-view="about"><span>ⓘ</span>关于软件</button>
+            <button class="nav-item" data-view="about"><span>ⓘ</span>关于</button>
         </nav>
-        <div class="sidebar-foot"><span id="source-count">0 个播放接口</span><small>本地数据 · 不预置内容</small></div>
-    </aside>
+        <div class="sidebar-foot"><span id="source-count">0 个播放接口</span><small id="tv-clock">--:--</small></div>
+    </header>
 
     <main class="main-content">
         <header class="topbar">
-            <button class="mobile-menu" id="mobile-menu" aria-label="打开导航">☰</button>
+            <button class="mobile-menu" id="mobile-menu" aria-label="打开导航">功能</button>
             <div class="page-heading"><span id="page-kicker">MT 精选</span><h1 id="page-title">热门片单</h1></div>
             <form class="global-search" id="global-search">
                 <input id="search-input" type="search" autocomplete="off" placeholder="搜索电影、电视剧、动漫…" />
@@ -114,7 +113,7 @@
 
         <section class="view" id="view-about">
             <article class="about-card">
-                <div class="about-identity"><img src="/images/mtplayer-icon.png" alt="MT播放器图标" /><div><span>MT PLAYER / WEB · V1.3.1</span><h2>MT播放器</h2><p>统一的 Windows、Android 手机、Android TV、macOS 与网页播放客户端。</p></div></div>
+                <div class="about-identity"><img src="/images/mtplayer-icon.png" alt="MT播放器图标" /><div><span>MT PLAYER / WEB · V1.3.6</span><h2>MT播放器</h2><p>统一的 Windows、Android 手机、Android TV、macOS 与网页播放客户端。</p></div></div>
                 <p class="about-description">软件不预置任何影视内容、接口或直播源，仅用于播放用户自行配置且有权访问的媒体。账户服务器只保存同步数据，影视搜索与播放流不写入云端。</p>
                 <div class="about-links">
                     <a href="https://github.com/meiyemeng/MTplayer" target="_blank" rel="noopener">GitHub 源码仓库</a>

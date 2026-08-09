@@ -15,7 +15,7 @@ internal sealed class AppSettings
     public bool UseSourceCovers { get; set; } = true;
     public string TmdbApiKey { get; set; } = string.Empty;
     public string SpiderGatewayUrl { get; set; } = string.Empty;
-    public string SpiderGatewayToken { get; set; } = string.Empty;
+    public string SpiderGatewayToken { get; set; } = "mtplayer-local";
     public List<string> DisabledSiteKeys { get; set; } = [];
     public List<ConfigurationSourceEntry> ConfigurationSources { get; set; } = [];
     public string ActiveConfigurationSourceId { get; set; } = string.Empty;

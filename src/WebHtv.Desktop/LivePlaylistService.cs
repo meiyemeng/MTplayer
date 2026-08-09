@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using System.Globalization;
@@ -7,6 +8,125 @@ using WebHtv.Core.Configuration;
 namespace WebHtv.Desktop;
 
 internal sealed record LiveChannel(string Group, string Name, string Url, IReadOnlyDictionary<string, string> Headers, string? LogoUrl = null, string? ChannelId = null, string? NowPlaying = null, string? NextPlaying = null);
+
+internal sealed record LiveChannelSourceOption(string Label, LiveChannel Channel);
+
+internal sealed record LiveChannelGroup(
+    string Category,
+    string Name,
+    string? LogoUrl,
+    string? NowPlaying,
+    IReadOnlyList<LiveChannelSourceOption> Sources)
+{
+    public string SourceCountText => $"{Sources.Count} 个源";
+    public string ProgrammeText => string.IsNullOrWhiteSpace(NowPlaying) ? "暂无节目预告" : $"正在播放 · {NowPlaying}";
+}
+
+internal static class LiveChannelOrganizer
+{
+    public const string AllCategory = "全部频道";
+
+    public static IReadOnlyList<LiveChannelGroup> GroupChannels(IEnumerable<LiveChannel> channels) =>
+        channels
+            .Where(channel => !string.IsNullOrWhiteSpace(channel.Name))
+            .GroupBy(channel => NormalizeName(channel.Name), StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                var sources = group
+                    .DistinctBy(channel => channel.Url, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                var options = sources
+                    .Select((channel, index) => new LiveChannelSourceOption(BuildSourceLabel(channel, index), channel))
+                    .ToArray();
+                var representative = sources[0];
+                return new LiveChannelGroup(
+                    DetermineCategory(sources),
+                    representative.Name.Trim(),
+                    sources.Select(channel => channel.LogoUrl).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)),
+                    sources.Select(channel => channel.NowPlaying).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value)),
+                    options);
+            })
+            .OrderBy(group => CategoryOrder(group.Category))
+            .ThenBy(group => NaturalSortKey(group.Name), StringComparer.OrdinalIgnoreCase)
+            .Take(3000)
+            .ToArray();
+
+    public static IReadOnlyList<string> BuildCategories(IEnumerable<LiveChannelGroup> groups) =>
+        new[] { AllCategory }
+            .Concat(groups.Select(group => group.Category)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(CategoryOrder)
+                .ThenBy(value => value, StringComparer.OrdinalIgnoreCase))
+            .ToArray();
+
+    public static bool Matches(LiveChannelGroup group, string? query, string? category)
+    {
+        if (!string.IsNullOrWhiteSpace(category) &&
+            !category.Equals(AllCategory, StringComparison.OrdinalIgnoreCase) &&
+            !group.Category.Equals(category, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var keyword = query?.Trim();
+        return string.IsNullOrWhiteSpace(keyword) ||
+               group.Name.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+               group.Category.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+               group.Sources.Any(source => source.Label.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string NormalizeName(string name)
+    {
+        var normalized = name.Normalize(NormalizationForm.FormKC).Trim();
+        normalized = Regex.Replace(normalized, @"\s+", " ");
+        normalized = Regex.Replace(
+            normalized,
+            @"[\[【(（]\s*(?:高清|超清|蓝光|标清|HD|4K|IPv4|IPv6|线路\s*\d+|源\s*\d+)\s*[\]】)）]",
+            string.Empty,
+            RegexOptions.IgnoreCase);
+        normalized = Regex.Replace(
+            normalized,
+            @"\s+(?:高清|超清|蓝光|标清|HD|4K|IPv4|IPv6|线路\s*\d+|源\s*\d+)$",
+            string.Empty,
+            RegexOptions.IgnoreCase);
+        return normalized.Trim();
+    }
+
+    private static string DetermineCategory(IReadOnlyList<LiveChannel> channels)
+    {
+        var combined = string.Join(' ', channels.Select(channel => $"{channel.Group} {channel.Name}"));
+        if (Regex.IsMatch(combined, @"CCTV|CGTN|央视", RegexOptions.IgnoreCase)) return "央视频道";
+        if (combined.Contains("卫视", StringComparison.OrdinalIgnoreCase)) return "卫视频道";
+        if (Regex.IsMatch(combined, @"广播|电台|Radio", RegexOptions.IgnoreCase)) return "广播频道";
+        return channels.Select(channel => channel.Group.Trim())
+                   .FirstOrDefault(group => !string.IsNullOrWhiteSpace(group))
+               ?? "其他频道";
+    }
+
+    private static string BuildSourceLabel(LiveChannel channel, int index)
+    {
+        var parts = new List<string> { $"源 {index + 1}" };
+        if (!string.IsNullOrWhiteSpace(channel.Group)) parts.Add(channel.Group.Trim());
+        if (Uri.TryCreate(channel.Url, UriKind.Absolute, out var uri) && !string.IsNullOrWhiteSpace(uri.Host)) parts.Add(uri.Host);
+        return string.Join(" · ", parts.Distinct(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static int CategoryOrder(string category) => category switch
+    {
+        AllCategory => 0,
+        "央视频道" => 1,
+        "卫视频道" => 2,
+        "地方频道" => 3,
+        "体育频道" => 4,
+        "影视频道" => 5,
+        "广播频道" => 90,
+        "其他频道" => 99,
+        _ => 50
+    };
+
+    private static string NaturalSortKey(string name) =>
+        Regex.Replace(name, @"\d+", match => match.Value.PadLeft(10, '0'));
+}
 
 internal sealed class LivePlaylistService : IDisposable
 {

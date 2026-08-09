@@ -82,12 +82,28 @@ public partial class MovieDetailWindow : Window
 
     private void Play_Click(object sender, RoutedEventArgs e) => OpenPlayer();
 
-    private void EpisodeList_MouseDoubleClick(object sender, MouseButtonEventArgs e) => OpenPlayer();
+    private void EpisodeList_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (ItemsControl.ContainerFromElement(EpisodeList, e.OriginalSource as DependencyObject) is ListBoxItem item)
+        {
+            EpisodeList.SelectedItem = item.DataContext;
+            OpenPlayer();
+        }
+    }
+
+    private void EpisodeList_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is not (Key.Enter or Key.Space)) return;
+        e.Handled = true;
+        OpenPlayer();
+    }
 
     private void OpenPlayer()
     {
         if (SourceSelector.SelectedIndex < 0 || EpisodeList.SelectedIndex < 0) return;
-        new PlayerWindow(_viewModel, _activeContext, SourceSelector.SelectedIndex, EpisodeList.SelectedIndex, 0).Show();
+        PlayerWindowLauncher.TryShow(
+            this,
+            () => new PlayerWindow(_viewModel, _activeContext, SourceSelector.SelectedIndex, EpisodeList.SelectedIndex, 0));
     }
 }
 

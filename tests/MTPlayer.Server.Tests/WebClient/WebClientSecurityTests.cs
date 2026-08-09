@@ -99,6 +99,46 @@ public sealed class WebClientSecurityTests
     }
 
     [Fact]
+    public async Task Media_proxy_preserves_spider_playback_headers()
+    {
+        var handler = new CapturingHandler();
+        var signer = CreateSigner();
+        var gateway = new WebClientGateway(new HttpClient(handler), signer);
+        var token = signer.Sign(
+            "http://93.184.216.34/media/video.mp4",
+            "media",
+            headers: new Dictionary<string, string>
+            {
+                ["Referer"] = "https://player.example/",
+                ["User-Agent"] = "MTPlayer-Test",
+            });
+        var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream();
+
+        await gateway.ProxyAsync(context, "media", token, CancellationToken.None);
+
+        Assert.Equal("https://player.example/", handler.Referer);
+        Assert.Equal("MTPlayer-Test", handler.UserAgent);
+    }
+
+    [Fact]
+    public async Task Media_proxy_does_not_treat_redirected_segment_images_as_hls_manifests()
+    {
+        const string segment = "C:\\binary-segment";
+        var signer = CreateSigner();
+        var gateway = new WebClientGateway(new HttpClient(new StaticHandler(segment, "image/png")), signer);
+        var token = signer.Sign("http://93.184.216.34/nby/m3u8/play/ts/segment", "media");
+        var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream();
+
+        await gateway.ProxyAsync(context, "media", token, CancellationToken.None);
+
+        context.Response.Body.Position = 0;
+        Assert.Equal(segment, await new StreamReader(context.Response.Body).ReadToEndAsync(CancellationToken.None));
+        Assert.Equal("image/png", context.Response.ContentType);
+    }
+
+    [Fact]
     public async Task Configuration_fetch_retries_transient_connection_resets_with_fresh_requests()
     {
         const string config = """
@@ -177,6 +217,37 @@ public sealed class WebClientSecurityTests
         Assert.Equal("https://parser.example/?url=episode-1", playback.Url);
         Assert.Equal("Bearer test-token", handler.LastAuthorization);
         Assert.Equal(JsonValueKind.True, handler.LastSearchableKind);
+    }
+
+    [Fact]
+    public async Task Configuration_inspection_degrades_gracefully_when_spider_gateway_is_unreachable()
+    {
+        const string config = """
+            {
+              "spider": "https://cdn.example/runtime.jar",
+              "sites": [{ "key": "video", "name": "Android Spider", "type": 3,
+                "api": "csp_VideoX", "searchable": 1 }]
+            }
+            """;
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["SPIDER_GATEWAY_URL"] = "http://gateway.example:9978",
+            ["SPIDER_GATEWAY_TOKEN"] = "test-token",
+        }).Build();
+        var gateway = new WebClientGateway(
+            new HttpClient(new UnreachableSpiderGatewayHandler(config)),
+            CreateSigner(),
+            configuration);
+
+        var inspected = await gateway.InspectAsync(
+            new WebConfigRequest(Guid.NewGuid(), "http://93.184.216.34/config.json"),
+            CancellationToken.None);
+
+        Assert.Empty(inspected.Sites);
+        Assert.Equal(1, inspected.DetectedSiteCount);
+        Assert.Equal(1, inspected.RuntimeRequiredSiteCount);
+        Assert.Contains(inspected.Warnings, warning => warning.Contains("暂时不可用", StringComparison.Ordinal));
+        Assert.Contains(inspected.Warnings, warning => warning.Contains("需配置 Android Spider Gateway", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -321,6 +392,25 @@ public sealed class WebClientSecurityTests
         });
     }
 
+    private sealed class CapturingHandler : HttpMessageHandler
+    {
+        public string? Referer { get; private set; }
+        public string? UserAgent { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Referer = request.Headers.Referrer?.ToString();
+            UserAgent = request.Headers.UserAgent.ToString();
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent([1, 2, 3]),
+                RequestMessage = request,
+            });
+        }
+    }
+
     private sealed class ResetThenSuccessHandler(string content, int failures) : HttpMessageHandler
     {
         public int Attempts { get; private set; }
@@ -394,5 +484,21 @@ public sealed class WebClientSecurityTests
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),
                 RequestMessage = request,
             });
+    }
+
+    private sealed class UnreachableSpiderGatewayHandler(string configuration) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri?.AbsolutePath == "/config.json")
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(configuration, Encoding.UTF8, "application/json"),
+                    RequestMessage = request,
+                });
+            throw new HttpRequestException("Connection refused");
+        }
     }
 }

@@ -254,3 +254,425 @@ body[data-density="relaxed"] { --poster-width: 220px; }
     .player-actions { max-height: 110px; overflow: auto; }
     .timeline { grid-template-columns: 48px 1fr 48px; gap: 6px; }
 }
+
+/* Android TV parity layer: keep the existing functional DOM while matching the
+   leanback application's full-screen toolbar, focus tiles and content spacing. */
+:root {
+    --bg: #000;
+    --sidebar: #000;
+    --surface: rgba(0, 0, 0, .20);
+    --surface-2: rgba(255, 255, 255, .08);
+    --surface-3: rgba(255, 255, 255, .14);
+    --line: rgba(255, 255, 255, .20);
+    --text: #fff;
+    --muted: rgba(255, 255, 255, .62);
+    --red: #fff;
+    --red-2: #fff;
+    --red-soft: rgba(255, 255, 255, .10);
+    --shadow: 0 18px 45px rgba(0, 0, 0, .55);
+}
+
+body {
+    background: #000;
+}
+
+button,
+input,
+select {
+    border-radius: 4px;
+}
+
+button {
+    border: 1.5px solid transparent;
+    background: rgba(0, 0, 0, .20);
+}
+
+button:hover,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+.poster-card:focus-visible {
+    transform: none;
+    outline: none;
+    border-color: #fff;
+    background: rgba(0, 0, 0, .40);
+}
+
+button.primary,
+.global-search button {
+    border-color: rgba(255, 255, 255, .34);
+    background: rgba(0, 0, 0, .40);
+    color: #fff;
+}
+
+button.primary:hover,
+.global-search button:hover {
+    border-color: #fff;
+    background: rgba(255, 255, 255, .12);
+}
+
+input,
+select {
+    border-color: rgba(255, 255, 255, .24);
+    background: rgba(0, 0, 0, .40);
+}
+
+.app-shell {
+    display: grid;
+    grid-template-rows: 84px 1fr;
+    min-height: 100vh;
+    background: #000;
+}
+
+.sidebar {
+    position: sticky;
+    inset: 0 0 auto;
+    z-index: 40;
+    display: grid;
+    grid-template-columns: 245px minmax(0, 1fr) auto;
+    gap: 20px;
+    align-items: center;
+    width: 100%;
+    height: 84px;
+    padding: 12px 24px;
+    border: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, .14);
+    background: rgba(0, 0, 0, .96);
+    backdrop-filter: blur(14px);
+}
+
+.brand {
+    min-height: 0;
+    padding: 0;
+}
+
+.brand img {
+    width: 48px;
+    height: 48px;
+    border-radius: 8px;
+    box-shadow: none;
+}
+
+.brand strong {
+    font-size: 20px;
+}
+
+.brand small {
+    margin-top: 2px;
+    color: rgba(255, 255, 255, .48);
+    font-size: 9px;
+}
+
+.nav-list {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    min-width: 0;
+    margin: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.nav-list::-webkit-scrollbar {
+    display: none;
+}
+
+.nav-list > i {
+    display: none;
+}
+
+.nav-item {
+    width: auto;
+    min-width: 96px;
+    min-height: 56px;
+    flex: 0 0 auto;
+    justify-content: center;
+    gap: 8px;
+    border: 1.5px solid transparent;
+    border-radius: 4px;
+    padding: 8px 14px;
+    background: rgba(0, 0, 0, .20);
+    color: #fff;
+    font-size: 17px;
+}
+
+.nav-item span {
+    color: #fff;
+}
+
+.nav-item.active {
+    border-color: rgba(255, 255, 255, .42);
+    background: rgba(0, 0, 0, .40);
+}
+
+.nav-item:hover,
+.nav-item:focus-visible {
+    border-color: #fff;
+    background: rgba(0, 0, 0, .40);
+}
+
+.sidebar-foot {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    margin: 0;
+    padding: 0;
+    color: rgba(255, 255, 255, .68);
+    white-space: nowrap;
+}
+
+.sidebar-foot small {
+    color: #fff;
+    font-size: 22px;
+    font-variant-numeric: tabular-nums;
+}
+
+.main-content {
+    min-height: 0;
+    margin: 0;
+    padding: 0 24px 50px;
+}
+
+.topbar {
+    position: sticky;
+    top: 84px;
+    grid-template-columns: minmax(200px, 1fr) minmax(320px, 520px) auto;
+    padding: 20px 0 18px;
+    background: linear-gradient(#000 78%, transparent);
+}
+
+.page-heading span,
+.section-head span,
+.panel-title span,
+.hero > div > span,
+.about-card > span {
+    color: rgba(255, 255, 255, .58);
+}
+
+.page-heading h1 {
+    margin-top: 2px;
+    font-size: 26px;
+}
+
+.global-search input {
+    height: 48px;
+    border-radius: 4px;
+    font-size: 18px;
+}
+
+.global-search button,
+.account-chip {
+    min-height: 48px;
+}
+
+.hero {
+    min-height: 220px;
+    border-color: rgba(255, 255, 255, .14);
+    border-radius: 0;
+    padding: 36px 42px;
+    background: linear-gradient(105deg, rgba(255, 255, 255, .09), rgba(0, 0, 0, .08));
+    box-shadow: none;
+}
+
+.hero:after {
+    background: linear-gradient(115deg, transparent 52%, rgba(255, 255, 255, .07) 52% 63%, transparent 63%);
+}
+
+.hero h2 {
+    font-size: clamp(34px, 4vw, 50px);
+}
+
+.hero-signal {
+    display: none;
+}
+
+.home-sections {
+    gap: 30px;
+    margin-top: 28px;
+}
+
+.home-row h2,
+.section-head h2 {
+    font-size: 24px;
+}
+
+.poster-row {
+    grid-auto-columns: var(--poster-width, 168px);
+    gap: 16px;
+    padding: 3px 3px 14px;
+}
+
+.poster-grid {
+    grid-template-columns: repeat(auto-fill, minmax(var(--poster-width, 168px), 1fr));
+    gap: 20px 16px;
+}
+
+.poster-card {
+    border: 1.5px solid transparent;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, .08);
+    box-shadow: none;
+}
+
+.poster-card:hover,
+.poster-card:focus-visible {
+    transform: none;
+    border-color: #fff;
+    background: rgba(255, 255, 255, .08);
+    box-shadow: none;
+}
+
+.poster-card:hover img {
+    transform: none;
+}
+
+.poster-card .source-badge {
+    border-radius: 0 0 4px 0;
+    background: rgba(0, 0, 0, .65);
+}
+
+.section-head {
+    margin: 8px 0 20px;
+}
+
+.panel,
+.about-card,
+.detail-dialog,
+.episode-panel {
+    border-color: rgba(255, 255, 255, .20);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, .20);
+    box-shadow: none;
+}
+
+.stack-item,
+.live-card,
+.check-grid label,
+.sync-panel dl div {
+    border: 1.5px solid transparent;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, .08);
+}
+
+.stack-item:focus-within,
+.live-card:hover,
+.check-grid label:focus-within {
+    border-color: #fff;
+}
+
+.about-card {
+    max-width: 1100px;
+    margin-top: 20px;
+}
+
+.about-identity img,
+.donate-panel,
+.donate-panel img {
+    border-radius: 8px;
+}
+
+.detail-dialog::backdrop {
+    background: rgba(0, 0, 0, .88);
+}
+
+.detail-hero {
+    background: #000;
+}
+
+.source-tabs button.active,
+.episode-grid button.active {
+    border-color: #fff;
+    background: rgba(255, 255, 255, .16);
+}
+
+.player-bottom {
+    border-radius: 4px;
+    background: rgba(0, 0, 0, .72);
+}
+
+.toast {
+    border-radius: 4px;
+    background: rgba(0, 0, 0, .88);
+}
+
+* {
+    scrollbar-color: rgba(255, 255, 255, .34) #000;
+}
+
+::-webkit-scrollbar-track {
+    background: #000;
+}
+
+::-webkit-scrollbar-thumb {
+    border-color: #000;
+    background: rgba(255, 255, 255, .34);
+}
+
+@media (max-width: 1120px) {
+    .sidebar {
+        grid-template-columns: 200px minmax(0, 1fr);
+    }
+
+    .sidebar-foot {
+        display: none;
+    }
+
+    .nav-item {
+        min-width: 88px;
+    }
+}
+
+@media (max-width: 820px) {
+    .app-shell {
+        grid-template-rows: 74px 1fr;
+    }
+
+    .sidebar {
+        position: sticky;
+        transform: none;
+        grid-template-columns: 1fr auto;
+        width: 100%;
+        height: 74px;
+        padding: 10px 16px;
+    }
+
+    .sidebar.open {
+        transform: none;
+        box-shadow: none;
+    }
+
+    .nav-list {
+        position: absolute;
+        top: 74px;
+        right: 0;
+        left: 0;
+        display: none;
+        flex-wrap: wrap;
+        padding: 14px;
+        background: #000;
+        border-bottom: 1px solid var(--line);
+    }
+
+    .sidebar.open .nav-list {
+        display: flex;
+    }
+
+    .sidebar-foot {
+        display: none;
+    }
+
+    .main-content {
+        padding: 0 18px 50px;
+    }
+
+    .topbar {
+        top: 74px;
+        grid-template-columns: auto 1fr;
+    }
+
+    .mobile-menu {
+        display: block;
+        width: auto;
+        min-width: 62px;
+    }
+}

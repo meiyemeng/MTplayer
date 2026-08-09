@@ -10,6 +10,7 @@ import androidx.lifecycle.LifecycleEventObserver;
 
 import com.fongmi.android.tv.bean.Update;
 import com.fongmi.android.tv.impl.UpdateListener;
+import com.fongmi.android.tv.membership.MembershipClient;
 import com.fongmi.android.tv.setting.Setting;
 import com.fongmi.android.tv.ui.dialog.UpdateDialog;
 import com.fongmi.android.tv.utils.Download;
@@ -21,6 +22,8 @@ import com.fongmi.android.tv.utils.ResUtil;
 import com.fongmi.android.tv.utils.Task;
 import com.github.catvod.net.OkHttp;
 import com.github.catvod.utils.Path;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 
 import org.json.JSONObject;
 
@@ -116,6 +119,52 @@ public class Updater implements Download.Callback, UpdateListener {
     }
 
     private Update fetchUpdate() {
+        Update member = fetchMemberUpdate();
+        if (member.hasUpdate()) return member;
+
+        Update github = fetchGithubUpdate();
+        if (github.hasUpdate() || !member.hasManifest()) return github;
+        return member;
+    }
+
+    private Update fetchMemberUpdate() {
+        Update update = Update.empty(Update.CHANNEL_STABLE);
+        MembershipClient client = new MembershipClient(App.get());
+        if (!client.isSignedIn()) return update;
+        try {
+            JsonArray manifests = client.updates();
+            JsonObject selected = null;
+            for (int i = 0; i < manifests.size(); i++) {
+                if (!manifests.get(i).isJsonObject()) continue;
+                JsonObject candidate = manifests.get(i).getAsJsonObject();
+                String version = jsonString(candidate, "androidVersion");
+                String address = jsonString(candidate, "androidDownloadUrl");
+                if (TextUtils.isEmpty(version) || TextUtils.isEmpty(address)) continue;
+                if (selected == null || compareVersions(version, jsonString(selected, "androidVersion")) > 0) {
+                    selected = candidate;
+                }
+            }
+            if (selected == null) return update;
+
+            update.name = jsonString(selected, "androidVersion");
+            update.desc = jsonString(selected, "title");
+            String message = jsonString(selected, "message");
+            update.notes = TextUtils.isEmpty(update.desc) ? message
+                    : TextUtils.isEmpty(message) ? update.desc
+                    : update.desc + "\n\n" + message;
+            update.apkUrl = jsonString(selected, "androidDownloadUrl");
+            update.channel = Update.CHANNEL_STABLE;
+            update.code = compareVersions(update.name, BuildConfig.VERSION_NAME) > 0
+                    ? BuildConfig.VERSION_CODE + 1
+                    : 0;
+        } catch (Exception e) {
+            Log.w(TAG, "fetchMemberUpdate error", e);
+            update.error = e.getMessage();
+        }
+        return update;
+    }
+
+    private Update fetchGithubUpdate() {
         Update update = Update.empty(Update.CHANNEL_STABLE);
         String url = getJson();
         try {
@@ -149,6 +198,36 @@ public class Updater implements Download.Callback, UpdateListener {
             update.error = e.getMessage();
         }
         return update;
+    }
+
+    private String jsonString(JsonObject object, String name) {
+        try {
+            return object != null && object.has(name) && !object.get(name).isJsonNull()
+                    ? object.get(name).getAsString().trim()
+                    : "";
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private int compareVersions(String left, String right) {
+        String[] a = AppVersion.stripPrefix(left).split("[^0-9]+");
+        String[] b = AppVersion.stripPrefix(right).split("[^0-9]+");
+        int count = Math.max(a.length, b.length);
+        for (int i = 0; i < count; i++) {
+            int av = i < a.length && !a[i].isEmpty() ? parseVersionPart(a[i]) : 0;
+            int bv = i < b.length && !b[i].isEmpty() ? parseVersionPart(b[i]) : 0;
+            if (av != bv) return Integer.compare(av, bv);
+        }
+        return 0;
+    }
+
+    private int parseVersionPart(String value) {
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
     }
 
     private boolean isDefaultReleaseNotes(String notes) {
